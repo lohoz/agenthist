@@ -16,6 +16,11 @@ test("human detail rendering is bounded without changing the complete result", (
   assert.doesNotMatch(rendered, /item 50\n/);
   assert.match(rendered, /\.\.\. 2 more items; use --json for complete details\.\n$/);
   assert.equal(items.length, 52);
+
+  const compact = renderBoundedHumanDetails(items, (item) => `item ${item}\n`, "item", 2);
+  assert.match(compact, /^item 0\nitem 1\n/);
+  assert.doesNotMatch(compact, /item 2\n/);
+  assert.match(compact, /\.\.\. 50 more items/);
 });
 
 test("human status colors degrade to plain text", () => {
@@ -133,7 +138,7 @@ test("version, doctor, malformed journals, and unsupported commands have stable 
       color: true,
     });
     assert.equal(humanReady.exitCode, 0, humanReady.stderr);
-    assert.match(humanReady.stdout, /\u001b\[[0-9;]+mAgentHist doctor\u001b\[0m/);
+    assert.match(humanReady.stdout, /\u001b\[[0-9;]+mAgentHist Doctor\u001b\[0m/);
     assert.match(humanReady.stdout, /\u001b\[32mREADY\u001b\[0m/);
     assert.ok(humanReady.stdout.includes(`\u001b[2m${codexHome}\u001b[0m`));
     assert.ok(humanReady.stdout.includes(`\u001b[2m${sqliteHome}\u001b[0m`));

@@ -189,6 +189,10 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
           ...ENTRY,
           conversation: [
             { kind: "message", role: "user", text: "Check the evidence.", timestamp: ENTRY.createdAt },
+            { kind: "gap", code: "fixture.step", label: "step started", timestamp: ENTRY.createdAt },
+            { kind: "gap", code: "fixture.tool", label: "tool detail", timestamp: ENTRY.createdAt },
+            { kind: "gap", code: "fixture.tool", label: "tool detail", timestamp: ENTRY.createdAt },
+            { kind: "gap", code: "fixture.step", label: "step finished", timestamp: ENTRY.createdAt },
             { kind: "message", role: "assistant", text: "The evidence is consistent.", timestamp: ENTRY.updatedAt },
           ],
         };
@@ -241,6 +245,8 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     assert.match(rendered, /\[l\] English/);
     assert.match(rendered, /Session preview/);
     assert.match(rendered, /Check the evidence\./);
+    assert.match(rendered, /4 technical records folded/);
+    assert.match(rendered, /fixture\.tool\s+×2/);
     assert.match(rendered, /SOURCES/);
     assert.match(rendered, /SCOPES/);
     assert.match(rendered, /SESSIONS · Claude Code/);

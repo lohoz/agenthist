@@ -65,6 +65,8 @@ export interface ImportWizardCopy {
     readonly conversation: string;
     readonly you: string;
     readonly gap: string;
+    collapsedGaps(count: number): string;
+    moreGapTypes(count: number): string;
     readonly emptyMessage: string;
     readonly noConversation: string;
     readonly messageTruncated: string;
@@ -237,6 +239,8 @@ const EN: ImportWizardCopy = {
     conversation: "Conversation",
     you: "YOU",
     gap: "GAP",
+    collapsedGaps: (count) => `${count} technical records folded`,
+    moreGapTypes: (count) => `... ${count} more record type(s)`,
     emptyMessage: "(empty message)",
     noConversation: "(no readable conversation items)",
     messageTruncated: "... [message truncated]",
@@ -423,6 +427,8 @@ const ZH: ImportWizardCopy = {
     conversation: "对话内容",
     you: "用户",
     gap: "缺口",
+    collapsedGaps: (count) => `已折叠 ${count} 条技术记录`,
+    moreGapTypes: (count) => `... 另有 ${count} 种记录`,
     emptyMessage: "（空消息）",
     noConversation: "（没有可读的对话内容）",
     messageTruncated: "... [消息已截断]",

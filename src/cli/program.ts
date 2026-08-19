@@ -121,7 +121,7 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
     }
     if (command === "doctor") return await runDoctor(globals, commandArgs.slice(1), runtime);
     if (command === "scan") return await runScan(globals, commandArgs.slice(1), runtime);
-    if (command === "history") return await runHistory(globals, commandArgs.slice(1));
+    if (command === "history") return await runHistory(globals, commandArgs.slice(1), runtime);
     if (command === "experience") return await runExperience(globals, commandArgs.slice(1), runtime);
     if (command === "skill") return await runSkill(globals, commandArgs.slice(1), runtime);
     if (command === "export") return await runExport(globals, commandArgs.slice(1), runtime);

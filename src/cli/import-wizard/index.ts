@@ -12,6 +12,17 @@ import {
   type ImportWorkspaceInspection,
 } from "../../application/index.js";
 import {
+  GAP_RUN_COLLAPSE_THRESHOLD,
+  groupConversationForDisplay,
+} from "../conversation-display.js";
+import { paint, type TerminalRole } from "../style.js";
+import {
+  importWizardCopy,
+  toggleImportWizardLanguage,
+  type ImportWizardCopy,
+  type ImportWizardLanguage,
+} from "./copy.js";
+import {
   cleanTerminalText,
   columns,
   displayWidth,
@@ -21,15 +32,9 @@ import {
   wrapDisplay,
   type TerminalKey,
 } from "./terminal.js";
-import { paint, type TerminalRole } from "../style.js";
-import {
-  importWizardCopy,
-  toggleImportWizardLanguage,
-  type ImportWizardCopy,
-  type ImportWizardLanguage,
-} from "./copy.js";
 
 const REVIEW_WORKSPACE_MAX_WIDTH = 80;
+const PREVIEW_GAP_TYPE_LIMIT = 8;
 
 export interface ImportWizardRequest {
   readonly sessions: readonly string[];
@@ -732,12 +737,31 @@ function conversationLines(
   copy: ImportWizardCopy,
 ): string[] {
   const result: string[] = [];
-  for (const item of conversation) {
-    if (item.kind === "gap") {
-      result.push(paint(`${copy.preview.gap}  ${oneLine(item.label, Math.max(1, width - 5))}`, "warning_strong", color));
-      result.push("");
+  for (const group of groupConversationForDisplay(conversation)) {
+    if (group.kind === "gaps") {
+      if (group.gaps.length < GAP_RUN_COLLAPSE_THRESHOLD) {
+        for (const gap of group.gaps) {
+          result.push(paint(
+            `${copy.preview.gap}  ${oneLine(gap.label, Math.max(1, width - 5))}`,
+            "warning_strong",
+            color,
+          ));
+          result.push("");
+        }
+      } else {
+        result.push(paint(copy.preview.collapsedGaps(group.gaps.length), "warning_strong", color));
+        for (const count of group.counts.slice(0, PREVIEW_GAP_TYPE_LIMIT)) {
+          const suffix = `×${count.count}`;
+          const codeWidth = Math.max(1, width - displayWidth(suffix) - 4);
+          result.push(paint(`  ${oneLine(count.code, codeWidth)}  ${suffix}`, "muted", color));
+        }
+        const remaining = group.counts.length - Math.min(group.counts.length, PREVIEW_GAP_TYPE_LIMIT);
+        if (remaining > 0) result.push(paint(`  ${copy.preview.moreGapTypes(remaining)}`, "muted", color));
+        result.push("");
+      }
       continue;
     }
+    const item = group.message;
     const role = item.role === "user"
       ? copy.preview.you
       : item.role === "assistant" ? agentLabel(agent).toUpperCase() : item.role.toUpperCase();

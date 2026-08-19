@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 
 import {
+  AGENTS,
   DEFAULT_HISTORY_LIMIT,
   DEFAULT_HISTORY_OFFSET,
   agentLabel,
@@ -13,10 +14,11 @@ import {
   searchHistory,
   showHistory,
   type Agent,
+  type ConversationGap,
   type ConversationItem,
+  type ConversationMessage,
   type HistoryLibraryView,
   type HistoryMutationOperation,
-  type HistoryPage,
   type HistorySessionSummary,
   type HistoryView,
   type PortableContextBlock,
@@ -26,11 +28,48 @@ import {
   invalidArguments,
   parseAgent,
   readValue,
+  renderBoundedHumanDetails,
   success,
   type CliResult,
   type CliRuntime,
   type GlobalOptions,
 } from "./command-support.js";
+import {
+  GAP_RUN_COLLAPSE_THRESHOLD,
+  groupConversationForDisplay,
+  type ConversationGapCount,
+} from "./conversation-display.js";
+import {
+  humanCount,
+  humanFields,
+  humanFieldWidth,
+  humanOutputWidth,
+  humanPage,
+  humanSection,
+  humanTitle,
+  type HumanField,
+} from "./human-output.js";
+import {
+  displayWidth,
+  padDisplay,
+  truncateDisplay,
+  truncateDisplayAround,
+  wrapDisplay,
+} from "./terminal-layout.js";
+
+const AGENT_COLUMN_WIDTH = Math.max(...AGENTS.map((agent) => displayWidth(agentLabel(agent))));
+const MAX_SESSION_TITLE_WIDTH = 72;
+const MAX_SEARCH_SNIPPET_WIDTH = 96;
+const MAX_TECHNICAL_TYPES = 12;
+const SCAN_WARNING_DISPLAY_LIMIT = 20;
+
+function sessionTitleWidth(outputWidth: number): number {
+  return Math.max(12, Math.min(MAX_SESSION_TITLE_WIDTH, outputWidth - AGENT_COLUMN_WIDTH - 9));
+}
+
+function searchSnippetWidth(outputWidth: number): number {
+  return Math.max(12, Math.min(MAX_SEARCH_SNIPPET_WIDTH, outputWidth - 20));
+}
 
 function statusTone(status: "ready" | "not_detected" | "blocked" | "error"):
   "success" | "warning" | "error" {
@@ -38,7 +77,11 @@ function statusTone(status: "ready" | "not_detected" | "blocked" | "error"):
 }
 
 function sourceLocationLabel(role: string): string {
-  return role.replaceAll("_", " ");
+  return role.split("_").map((part) => part[0]!.toUpperCase() + part.slice(1)).join(" ");
+}
+
+function sourceStatusLabel(status: "ready" | "not_detected" | "blocked" | "error"): string {
+  return status === "not_detected" ? "NOT DETECTED" : status.toUpperCase();
 }
 
 function historySourceOptions(
@@ -101,24 +144,49 @@ export async function runDoctor(
     ...(agent.detail === undefined ? {} : { detail: agent.detail }),
   }));
   const color = globals.color;
-  const human = `${colorizeHuman("AgentHist doctor", "section", color)}  ` +
-    `${colorizeHuman(result.status.toUpperCase(), statusTone(result.status), color)}\n\n` +
-    result.agents.map((agent) =>
-      `${colorizeHuman(agentLabel(agent.agent), "section", color)}  ` +
-      `${colorizeHuman(agent.status.toUpperCase(), statusTone(agent.status), color)}\n` +
-      agent.locations.map((location) =>
-        `  ${colorizeHuman(sourceLocationLabel(location.role).padEnd(18), "muted", color)}` +
-        `${colorizeHuman(location.path, "muted", color)}\n`
-      ).join("") +
-      agent.findings.map((finding) =>
-        `  ${colorizeHuman("finding".padEnd(18), "muted", color)}` +
-        `${colorizeHuman(finding, "warning", color)}\n`
-      ).join("") +
-      (agent.detail === undefined
-        ? ""
-        : `  ${colorizeHuman("detail".padEnd(18), "muted", color)}` +
-          `${colorizeHuman(agent.detail, agent.status === "error" || agent.status === "blocked" ? "error" : "warning", color)}\n`)
-    ).join("\n");
+  const summaryFields: HumanField[] = [
+    {
+      label: "Status",
+      value: sourceStatusLabel(result.status),
+      tone: statusTone(result.status),
+    },
+    {
+      label: "Agents",
+      value: `${result.agents.filter((agent) => agent.status === "ready").length} ready · ` +
+        `${result.agents.length} checked`,
+    },
+  ];
+  const agentGroups = result.agents.map((agent) => {
+    const fields: HumanField[] = [
+      {
+        label: "Status",
+        value: sourceStatusLabel(agent.status),
+        tone: statusTone(agent.status),
+      },
+      ...agent.locations.map((location) => ({
+        label: sourceLocationLabel(location.role),
+        value: location.path,
+        tone: "muted" as const,
+      })),
+      ...(agent.findings.length === 0
+        ? []
+        : [{ label: "Findings", value: agent.findings.join(", "), tone: "warning" as const }]),
+      ...(agent.detail === undefined
+        ? []
+        : [{
+            label: "Detail",
+            value: agent.detail,
+            tone: agent.status === "error" || agent.status === "blocked" ? "error" as const : "warning" as const,
+          }]),
+    ];
+    return { agent, fields };
+  });
+  const fieldWidth = humanFieldWidth(summaryFields, ...agentGroups.map((group) => group.fields));
+  const human = humanTitle("AgentHist Doctor", color) + "\n" +
+    humanFields(summaryFields, color, "  ", fieldWidth) + "\n" +
+    agentGroups.map(({ agent, fields }) =>
+      humanSection(agentLabel(agent.agent), color) + humanFields(fields, color, "  ", fieldWidth) + "\n"
+    ).join("");
   const exitCode = result.status === "ready" ? 0 : result.status === "not_detected" ? 3 :
     result.status === "blocked" ? 4 : 9;
   return success(
@@ -238,7 +306,8 @@ export async function runScan(
     return success(
       "scan",
       { status: "not_detected", agents: result.inspections, sessions: 0, warnings: [] },
-      `${colorizeHuman("No supported Agent history source was detected.", "warning", globals.color)}\n`,
+      humanTitle("History scan", globals.color) + "\n" +
+        `${colorizeHuman("No supported Agent history source was detected.", "warning", globals.color)}\n`,
       globals.json,
     );
   }
@@ -258,15 +327,27 @@ export async function runScan(
       warnings: result.warnings,
       state_directory: globals.stateDirectory,
     },
-    `${result.agents.map((item) =>
-      `${colorizeHuman("Scanned", "success", globals.color)} ` +
-      `${colorizeHuman(agentLabel(item.agent), "info", globals.color)}: ${item.sessions} session(s) · ` +
-      `${item.reusedSessions} reused · ` +
-      `${item.rebuiltSessions} rebuilt${item.removedSessions === 0 ? "" : ` · ${item.removedSessions} removed`}\n`
-    ).join("")}` +
-      result.warnings.map((warning) =>
-        `${colorizeHuman("warning:", "warning_strong", globals.color)} ${warning}\n`
-      ).join(""),
+    humanTitle("History scan", globals.color) + "\n" + humanFields([
+      { label: "Sessions", value: String(result.sessions), tone: "success" },
+      { label: "Agents", value: String(result.agents.length) },
+      { label: "State", value: globals.stateDirectory },
+    ], globals.color) + "\n" + humanSection("Results", globals.color) +
+      result.agents.map((item) =>
+        `  ${colorizeHuman(agentLabel(item.agent), "strong", globals.color)}\n` +
+        `    ${humanCount(item.sessions, "session")} · ${item.reusedSessions} reused · ${item.rebuiltSessions} rebuilt` +
+        `${item.removedSessions === 0 ? "" : ` · ${item.removedSessions} removed`}\n`
+      ).join("") +
+      (result.warnings.length === 0 ? "" : "\n" + humanSection("Warnings", globals.color) +
+        renderBoundedHumanDetails(
+          result.agents.flatMap((item) => item.warnings.map((warning) => ({ agent: item.agent, warning }))),
+          (item) => `  ${colorizeHuman(
+            padDisplay(agentLabel(item.agent), AGENT_COLUMN_WIDTH),
+            "warning_strong",
+            globals.color,
+          )}  ${item.warning}\n`,
+          "warning",
+          SCAN_WARNING_DISPLAY_LIMIT,
+        )),
     globals.json,
   );
 }
@@ -352,38 +433,120 @@ function renderPortableBlock(block: PortableContextBlock): string {
   return rendered;
 }
 
-function renderConversationItem(item: ConversationItem, color: boolean): string {
-  if (item.kind === "gap") {
-    return `${colorizeHuman(`[gap${item.code === undefined ? "" : ` ${item.code}`}]`, "warning", color)} ` +
-      `${item.label}\n`;
-  }
+function renderConversationMessage(item: ConversationMessage, color: boolean): string {
   const tone = item.role === "user"
     ? "message_user"
     : item.role === "assistant" ? "message_assistant" : "message_system";
-  return `${colorizeHuman(`${item.role}:`, tone, color)} ${item.text}\n` +
+  return `${colorizeHuman(item.role.toUpperCase(), tone, color)}\n${item.text}\n` +
     (item.portableBlocks ?? []).map(renderPortableBlock).join("") +
-    (item.portableNotes ?? []).map((note) => `  [note] ${note}\n`).join("");
+    "\n";
 }
 
-function renderPageSummary(
-  label: string,
-  page: HistoryPage,
+function renderConversationGap(item: ConversationGap, color: boolean): string {
+  return `${colorizeHuman(`[gap${item.code === undefined ? "" : ` ${item.code}`}]`, "warning", color)} ` +
+    `${item.label}\n\n`;
+}
+
+interface TechnicalCount {
+  readonly code: string;
+  readonly count: number;
+}
+
+function countTechnicalCodes(codes: readonly string[]): TechnicalCount[] {
+  const counts = new Map<string, number>();
+  for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
+  return [...counts].map(([code, count]) => ({ code, count }));
+}
+
+function renderTechnicalCounts(
+  counts: readonly TechnicalCount[],
+  color: boolean,
+  outputWidth: number,
 ): string {
-  return `${page.returned} of ${page.total} ${label}(s) at offset ${page.offset}; ` +
-    `${page.remaining} remaining.\n` +
-    (page.nextOffset === undefined ? "" : `next offset: ${page.nextOffset}\n`);
+  const shown = counts.slice(0, MAX_TECHNICAL_TYPES).map((item) => ({
+    ...item,
+    shownCode: truncateDisplay(item.code, Math.max(12, Math.min(56, outputWidth - 10))),
+  }));
+  const codeWidth = Math.max(0, ...shown.map((item) => displayWidth(item.shownCode)));
+  const rows = shown.map((item) =>
+    `  ${colorizeHuman(padDisplay(item.shownCode, codeWidth), "muted", color)}  ×${item.count}\n`
+  ).join("");
+  const remaining = counts.length - shown.length;
+  return rows + (remaining === 0
+    ? ""
+    : `  ${colorizeHuman(`... ${remaining} more types; use --json for details.`, "muted", color)}\n`);
 }
 
-export async function runHistory(globals: GlobalOptions, args: readonly string[]): Promise<CliResult> {
+function renderGapRun(
+  gaps: readonly ConversationGap[],
+  counts: readonly ConversationGapCount[],
+  color: boolean,
+  outputWidth: number,
+): string {
+  if (gaps.length < GAP_RUN_COLLAPSE_THRESHOLD) {
+    return gaps.map((gap) => renderConversationGap(gap, color)).join("");
+  }
+  return `${colorizeHuman(`[${gaps.length} history gaps collapsed]`, "warning", color)}\n` +
+    renderTechnicalCounts(counts, color, outputWidth) + "\n";
+}
+
+export function renderHistoryConversation(
+  conversation: readonly ConversationItem[],
+  color: boolean,
+  outputWidth = 100,
+): string {
+  const rendered: string[] = [];
+  const notes: string[] = [];
+  for (const group of groupConversationForDisplay(conversation)) {
+    if (group.kind === "message") {
+      notes.push(...(group.message.portableNotes ?? []));
+      rendered.push(renderConversationMessage(group.message, color));
+    } else {
+      rendered.push(renderGapRun(group.gaps, group.counts, color, outputWidth));
+    }
+  }
+  if (notes.length !== 0) {
+    const counts = countTechnicalCodes(notes);
+    rendered.push(humanSection("Technical notes", color));
+    rendered.push(renderTechnicalCounts(counts, color, outputWidth));
+    const summary = `${notes.length} annotations collapsed across ${counts.length} ` +
+      `${counts.length === 1 ? "type" : "types"}; use --json for exact placement.`;
+    rendered.push(wrapDisplay(summary, Math.max(20, outputWidth - 2)).map((line) =>
+      `  ${colorizeHuman(line, "muted", color)}\n`
+    ).join(""));
+  }
+  return rendered.join("");
+}
+
+function sessionListItem(
+  session: HistorySessionSummary,
+  index: number,
+  titleWidth: number,
+  color: boolean,
+): string {
+  const title = truncateDisplay(session.title || "(untitled)", titleWidth);
+  const context = session.context === "" ? "No workspace" : session.context;
+  const state = session.libraryState === "active" ? "" : ` · ${session.libraryState}`;
+  const agent = padDisplay(agentLabel(session.agent), AGENT_COLUMN_WIDTH);
+  return `  ${String(index + 1).padStart(2)}. ${colorizeHuman(agent, "info", color)} · ` +
+    `${colorizeHuman(title, "strong", color)}\n` +
+    `      ${colorizeHuman(session.sessionRef, "muted", color)}\n` +
+    `      ${colorizeHuman(`${context} · ${session.updatedAt}${state}`, "muted", color)}\n`;
+}
+
+export async function runHistory(
+  globals: GlobalOptions,
+  args: readonly string[],
+  runtime: CliRuntime = {},
+): Promise<CliResult> {
   const action = args[0];
+  const outputWidth = humanOutputWidth(runtime.output?.columns);
   if (action === "list") {
     const flags = parseListFlags(args.slice(1));
     const result = await listHistory({ stateDirectory: globals.stateDirectory, ...flags });
     const human = result.sessions
-      .map((session) =>
-        `${colorizeHuman(session.sessionRef, "muted", globals.color)}  ${session.title || "(untitled)"}\n`
-      )
-      .join("");
+      .map((session, index) => sessionListItem(session, index, sessionTitleWidth(outputWidth), globals.color))
+      .join("\n");
     return success(
       "history list",
       {
@@ -395,7 +558,11 @@ export async function runHistory(globals: GlobalOptions, args: readonly string[]
         ...(result.nextOffset === undefined ? {} : { next_offset: result.nextOffset }),
         sessions: result.sessions.map(summary),
       },
-      `${human}${colorizeHuman(renderPageSummary("session", result).trimEnd(), "muted", globals.color)}\n`,
+      humanTitle("History", globals.color) + "\n" + humanFields([
+        { label: "View", value: flags.view },
+        { label: "Sessions", value: String(result.total) },
+      ], globals.color) + (human === "" ? "\nNo sessions found.\n" : `\n${human}\n`) +
+        humanPage("session", result.offset, result.returned, result.total, result.nextOffset, globals.color),
       globals.json,
     );
   }
@@ -407,10 +574,23 @@ export async function runHistory(globals: GlobalOptions, args: readonly string[]
     const flags = parseListFlags(args.slice(2));
     const result = await searchHistory({ stateDirectory: globals.stateDirectory, ...flags }, query);
     const human = result.hits
-      .map((hit) =>
-        `${colorizeHuman(hit.session.sessionRef, "muted", globals.color)}  ` +
-        `${colorizeHuman(`${hit.field}:`, "info", globals.color)} ${hit.snippet}\n`
-      )
+      .map((hit, index) => {
+        const fullTitle = hit.session.title || "(untitled)";
+        const title = truncateDisplay(fullTitle, sessionTitleWidth(outputWidth));
+        const titleMatch = hit.field === "title" && hit.snippet === fullTitle;
+        const match = titleMatch
+          ? colorizeHuman("title match", "muted", globals.color)
+          : `${colorizeHuman(hit.field, "muted", globals.color)}  ` +
+            truncateDisplayAround(hit.snippet, query, searchSnippetWidth(outputWidth));
+        const context = hit.session.context === "" ? "No workspace" : hit.session.context;
+        const agent = padDisplay(agentLabel(hit.session.agent), AGENT_COLUMN_WIDTH);
+        return `  ${String(index + 1).padStart(2)}. ` +
+          `${colorizeHuman(agent, "info", globals.color)} · ` +
+          `${colorizeHuman(title, "strong", globals.color)}\n` +
+          `      ${match}\n` +
+          `      ${colorizeHuman(`${context} · ${hit.session.updatedAt}`, "muted", globals.color)}\n` +
+          `      ${colorizeHuman(hit.session.sessionRef, "muted", globals.color)}\n`;
+      })
       .join("");
     return success(
       "history search",
@@ -424,19 +604,33 @@ export async function runHistory(globals: GlobalOptions, args: readonly string[]
         ...(result.nextOffset === undefined ? {} : { next_offset: result.nextOffset }),
         hits: result.hits.map((hit) => ({ ...summary(hit.session), field: hit.field, snippet: hit.snippet })),
       },
-      `${human}${colorizeHuman(renderPageSummary("hit", result).trimEnd(), "muted", globals.color)}\n`,
+      humanTitle("History search", globals.color) + "\n" + humanFields([
+        { label: "Query", value: query },
+        { label: "View", value: flags.view },
+        { label: "Hits", value: String(result.total) },
+      ], globals.color) + (human === "" ? "\nNo matches found.\n" : `\n${human}\n`) +
+        humanPage("hit", result.offset, result.returned, result.total, result.nextOffset, globals.color),
       globals.json,
     );
   }
   if (action === "show") {
     if (args.length !== 2) throw invalidArguments("history show requires exactly one session reference");
     const session = await showHistory(globals.stateDirectory, args[1]!);
-    const body = session.conversation.map((item) => renderConversationItem(item, globals.color)).join("");
+    const body = renderHistoryConversation(session.conversation, globals.color, outputWidth);
     return success(
       "history show",
       { session: summary(session), conversation: session.conversation },
-      `${colorizeHuman(session.sessionRef, "muted", globals.color)}\n` +
-        `${colorizeHuman(session.title || "(untitled)", "strong", globals.color)}\n\n${body}`,
+      humanTitle("History session", globals.color) + "\n" + humanFields([
+        { label: "Title", value: session.title || "(untitled)", tone: "strong" },
+        { label: "Agent", value: agentLabel(session.agent) },
+        { label: "Session", value: session.sessionRef },
+        { label: "Workspace", value: session.context || "-" },
+        { label: "Updated", value: session.updatedAt },
+        { label: "Model", value: session.model || "-" },
+        { label: "Provider", value: session.provider || "-" },
+        { label: "Library", value: session.libraryState },
+        ...(session.tags.length === 0 ? [] : [{ label: "Tags", value: session.tags.join(", ") }]),
+      ], globals.color) + "\n" + humanSection("Conversation", globals.color) + `\n${body}`,
       globals.json,
     );
   }
@@ -510,10 +704,28 @@ export async function runHistory(globals: GlobalOptions, args: readonly string[]
         before,
         after,
       },
-      `${colorizeHuman(result.changed ? "Changed" : "No change", result.changed ? "success" : "muted", globals.color)} ` +
-        `${colorizeHuman(result.sessionRef, "muted", globals.color)}: ` +
-        `${colorizeHuman(action, "info", globals.color)} ` +
-        `(${String(before.state)} -> ${String(after.state)})\n`,
+      humanTitle("History updated", globals.color) + "\n" + humanFields([
+        {
+          label: "Result",
+          value: result.changed ? "CHANGED" : "NO CHANGE",
+          tone: result.changed ? "success" : "muted",
+        },
+        { label: "Session", value: result.sessionRef },
+        { label: "Agent", value: agentLabel(result.agent) },
+        { label: "Operation", value: action, tone: "info" },
+        ...(result.before.state === result.after.state
+          ? []
+          : [{ label: "State", value: `${result.before.state} -> ${result.after.state}` }]),
+        ...(result.before.name === result.after.name
+          ? []
+          : [{ label: "Name", value: `${result.before.name || "-"} -> ${result.after.name || "-"}` }]),
+        ...(result.before.tags.join("\0") === result.after.tags.join("\0")
+          ? []
+          : [{
+              label: "Tags",
+              value: `${result.before.tags.join(", ") || "-"} -> ${result.after.tags.join(", ") || "-"}`,
+            }]),
+      ], globals.color),
       globals.json,
     );
   }

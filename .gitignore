@@ -1,0 +1,25 @@
+# Machine-local plans, experiments, credentials, and test infrastructure.
+/.local/
+.env
+.env.*
+*.jks
+*.p12
+*.pem
+*.pfx
+
+# Runtime state and generated artifacts.
+/.agenthist/
+/bin/
+/coverage/
+/dist/
+/.build/
+/node_modules/
+*.log
+*.prof
+*.test
+coverage.out
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+*~

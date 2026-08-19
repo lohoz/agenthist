@@ -1,0 +1,47 @@
+{
+  "name": "agenthist",
+  "version": "0.1.0",
+  "description": "Manage, migrate, convert, and extract recurring experience from local coding Agent history",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lohoz/agenthist.git"
+  },
+  "homepage": "https://github.com/lohoz/agenthist#readme",
+  "bugs": {
+    "url": "https://github.com/lohoz/agenthist/issues"
+  },
+  "type": "module",
+  "files": [
+    ".build/src",
+    ".build/package.json",
+    "LICENSE",
+    "README.md",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "agenthist": ".build/src/cli/main.js"
+  },
+  "scripts": {
+    "clean": "node --eval \"require('node:fs').rmSync('.build', { recursive: true, force: true })\"",
+    "build": "npm run clean --silent && tsc -p tsconfig.json",
+    "test": "node --test \".build/tests/**/*.test.js\"",
+    "benchmark:history": "node --expose-gc .build/tests/benchmarks/history-pool.js",
+    "smoke": "node .build/src/cli/main.js --help",
+    "smoke:package": "node tests/package-smoke.mjs",
+    "prepack": "npm run build",
+    "verify": "npm run build && npm test && npm run smoke"
+  },
+  "dependencies": {
+    "cross-spawn": "7.0.6",
+    "smol-toml": "1.7.1"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
+  }
+}

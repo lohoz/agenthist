@@ -91,6 +91,11 @@ Use `-o` or `--output` to set the output directory. When omitted, AgentHist crea
 | `review.md` | Candidates, evidence, source excerpts, and a review prompt |
 | `audit.md` | Evidence that was not included in a candidate group |
 
+See the fully synthetic [review](../examples/experience/review.md) and
+[audit](../examples/experience/audit.md) examples for representative research and software-development results.
+Chinese translations are also available for the [review](../examples/experience/review.zh-CN.md) and
+[audit](../examples/experience/audit.zh-CN.md).
+
 Use the result directory as context in a new conversation to review, merge, rewrite, or reject candidates.
 
 Evidence indexes and model results are cached for unchanged sessions.

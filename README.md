@@ -199,10 +199,10 @@ agenthist experience --all
 
 By default, AgentHist creates an `agenthist-experience-*` directory in the current directory:
 
-| File | Contents |
-| --- | --- |
-| `review.md` | Experience candidates, supporting evidence, source excerpts, and a review prompt |
-| `audit.md` | Evidence that was not included in a candidate group |
+| File | Contents | Example |
+| --- | --- | --- |
+| `review.md` | Candidates and supporting evidence | [View](docs/examples/experience/review.md) |
+| `audit.md` | Evidence that was not included in a candidate group | [View](docs/examples/experience/audit.md) |
 
 Start a new conversation with the complete result directory to review, merge, rewrite, or reject candidates against the evidence.
 

@@ -199,10 +199,10 @@ agenthist experience --all
 
 默认在当前目录创建 `agenthist-experience-*`：
 
-| 文件 | 内容 |
-| --- | --- |
-| `review.md` | 待确认的经验候选、支持证据、原文引用和审核 prompt |
-| `audit.md` | 未进入候选组的证据 |
+| 文件 | 内容 | 示例 |
+| --- | --- | --- |
+| `review.md` | 经验候选与支持证据 | [查看](docs/examples/experience/review.zh-CN.md) |
+| `audit.md` | 未进入候选组的证据 | [查看](docs/examples/experience/audit.zh-CN.md) |
 
 新建会话并提供整个结果目录，即可对照 `review.md` 与 `audit.md` 筛选、合并、改写或拒绝经验候选。
 

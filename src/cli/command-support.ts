@@ -26,6 +26,7 @@ export interface CliRuntime {
 
 export interface GlobalOptions {
   readonly json: boolean;
+  readonly color: boolean;
   readonly stateDirectory: string;
   readonly codexHome?: string;
   readonly sqliteHome?: string;
@@ -51,7 +52,19 @@ export function invalidArguments(message: string): CliUsageError {
 
 const HUMAN_DETAIL_LIMIT = 50;
 
-export type HumanTone = "info" | "success" | "error";
+export type HumanTone =
+  | "strong"
+  | "muted"
+  | "section"
+  | "info"
+  | "success"
+  | "warning"
+  | "warning_strong"
+  | "error"
+  | "error_strong"
+  | "message_user"
+  | "message_assistant"
+  | "message_system";
 
 export function colorizeHuman(
   text: string,
@@ -102,7 +115,7 @@ export function success(command: string, data: unknown, human: string, json: boo
   };
 }
 
-export function failure(command: string, error: unknown, json: boolean): CliResult {
+export function failure(command: string, error: unknown, json: boolean, color = false): CliResult {
   const detail: {
     readonly code: CliErrorCode;
     readonly message: string;
@@ -130,5 +143,9 @@ export function failure(command: string, error: unknown, json: boolean): CliResu
         })}\n`,
         stderr: "",
       }
-    : { exitCode: detail.exitCode, stdout: "", stderr: sanitizeHumanOutput(`agenthist: ${detail.message}\n`) };
+    : {
+        exitCode: detail.exitCode,
+        stdout: "",
+        stderr: sanitizeHumanOutput(`${paint("agenthist:", "error_strong", color)} ${detail.message}\n`),
+      };
 }

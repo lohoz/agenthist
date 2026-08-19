@@ -86,6 +86,11 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
   const removedPrepare = await runCli(["experience", "prepare", "--dry-run"]);
   assert.equal(removedPrepare.exitCode, 2);
   assert.match(removedPrepare.stderr, /unknown experience flag: prepare/);
+
+  const colored = await runCli(["--help"], { color: true });
+  assert.match(colored.stdout, /\u001b\[/);
+  assert.match(colored.stdout, /AgentHist/);
+  assert.doesNotMatch(result.stdout, /\u001b\[/);
 });
 
 test("version, doctor, malformed journals, and unsupported commands have stable process results", async () => {
@@ -115,10 +120,23 @@ test("version, doctor, malformed journals, and unsupported commands have stable 
       "doctor",
       "--agent", "codex",
     ];
-    const ready = await runCli(args, { environment: { HOME: root }, cwd: root, home: root });
+    const ready = await runCli(args, { environment: { HOME: root }, cwd: root, home: root, color: true });
     assert.equal(ready.exitCode, 0, ready.stderr);
     assert.equal((JSON.parse(ready.stdout) as { data: { status: string } }).data.status, "ready");
+    assert.doesNotMatch(ready.stdout, /\u001b\[/);
     await assert.rejects(lstat(state), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+
+    const humanReady = await runCli(args.filter((argument) => argument !== "--json"), {
+      environment: { HOME: root },
+      cwd: root,
+      home: root,
+      color: true,
+    });
+    assert.equal(humanReady.exitCode, 0, humanReady.stderr);
+    assert.match(humanReady.stdout, /\u001b\[[0-9;]+mAgentHist doctor\u001b\[0m/);
+    assert.match(humanReady.stdout, /\u001b\[32mREADY\u001b\[0m/);
+    assert.ok(humanReady.stdout.includes(`\u001b[2m${codexHome}\u001b[0m`));
+    assert.ok(humanReady.stdout.includes(`\u001b[2m${sqliteHome}\u001b[0m`));
 
     await rm(codexHome, { recursive: true });
     const absent = await runCli(args, { environment: { HOME: root }, cwd: root, home: root });
@@ -162,6 +180,9 @@ test("version, doctor, malformed journals, and unsupported commands have stable 
   assert.equal(humanFailure.exitCode, 2);
   assert.equal(humanFailure.stdout, "");
   assert.match(humanFailure.stderr, /^agenthist: unknown command: convert/);
+
+  const coloredFailure = await runCli(["convert"], { color: true });
+  assert.match(coloredFailure.stderr, /^\u001b\[1;31magenthist:\u001b\[0m unknown command: convert/);
 
   const jsonFailure = await runCli(["--json", "convert"]);
   assert.equal(jsonFailure.exitCode, 2);

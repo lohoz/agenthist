@@ -1,3 +1,5 @@
+import { colorizeHuman } from "./command-support.js";
+
 const commands = [
   ["doctor", "Inspect supported Agent history sources"],
   ["scan", "Capture history from every detected Agent"],
@@ -144,29 +146,40 @@ Show the AgentHist version.
 `,
 };
 
-export function rootHelp(): string {
+function renderCommandHelp(text: string, color: boolean): string {
+  return text.split("\n").map((line) => {
+    if (line === "Usage:") return colorizeHuman(line, "section", color);
+    if (line.startsWith("  agenthist ")) {
+      return `  ${colorizeHuman("agenthist", "info", color)}${line.slice("  agenthist".length)}`;
+    }
+    return line;
+  }).join("\n");
+}
+
+export function rootHelp(color = false): string {
   const commandLines = commands
-    .map(([name, description]) => `  ${name.padEnd(12)}${description}`)
+    .map(([name, description]) => `  ${colorizeHuman(name.padEnd(12), "info", color)}${description}`)
     .join("\n");
 
-  return `AgentHist manages, migrates, and extracts recurring experience from local Agent history.
+  return `${colorizeHuman("AgentHist", "strong", color)} manages, migrates, and extracts recurring experience from local Agent history.
 
-Usage:
-  agenthist [global options] <command>
+${colorizeHuman("Usage:", "section", color)}
+  ${colorizeHuman("agenthist", "info", color)} [global options] <command>
 
-Commands:
+${colorizeHuman("Commands:", "section", color)}
 ${commandLines}
 
-Common global options:
+${colorizeHuman("Common global options:", "section", color)}
   --json              Emit a stable JSON result envelope
   --state-dir <path>  Use another AgentHist state directory
   -h, --help          Show help
   -v, --version       Show version
 
-Run 'agenthist help <command>' for command usage and defaults.
+${colorizeHuman("Run 'agenthist help <command>' for command usage and defaults.", "muted", color)}
 `;
 }
 
-export function commandHelp(command: string): string | undefined {
-  return commandHelpText[command];
+export function commandHelp(command: string, color = false): string | undefined {
+  const help = commandHelpText[command];
+  return help === undefined ? undefined : renderCommandHelp(help, color);
 }

@@ -1,6 +1,7 @@
 import { installAgentHistSkill, uninstallAgentHistSkill } from "../skill/install.js";
 import { AGENTS, agentLabel, type Agent } from "../domain/agent.js";
 import {
+  colorizeHuman,
   invalidArguments,
   parseAgent,
   readValue,
@@ -17,12 +18,15 @@ interface SkillTargetResult {
   readonly status: string;
 }
 
-function renderTargets(items: readonly SkillTargetResult[]): string {
+function renderTargets(items: readonly SkillTargetResult[], color: boolean): string {
   return items.map((item) => {
-    const agentsLabel = item.agents.map(agentLabel).join(" + ");
-    const shared = item.shared ? " (shared)" : "";
-    return `  ${item.status.padEnd(10)} ${agentsLabel}${shared}\n` +
-      `             ${item.directory}\n`;
+    const agentsLabel = item.agents.map((agent) => colorizeHuman(agentLabel(agent), "info", color)).join(" + ");
+    const shared = item.shared ? colorizeHuman(" (shared)", "muted", color) : "";
+    const tone = item.status === "installed" || item.status === "removed"
+      ? "success"
+      : item.status === "preserved" ? "warning" : "muted";
+    return `  ${colorizeHuman(item.status.padEnd(10), tone, color)} ${agentsLabel}${shared}\n` +
+      `             ${colorizeHuman(item.directory, "muted", color)}\n`;
   }).join("");
 }
 
@@ -46,7 +50,8 @@ export async function runSkill(
     return success("skill", {
       operation: "uninstall",
       targets: result.items,
-    }, `AgentHist Skill\n\n${renderTargets(result.items)}`, globals.json);
+    }, `${colorizeHuman("AgentHist Skill", "section", globals.color)}\n\n` +
+      renderTargets(result.items, globals.color), globals.json);
   }
 
   const agents = new Set<Agent>();
@@ -77,5 +82,6 @@ export async function runSkill(
   return success("skill", {
     operation: "install",
     targets: result.items,
-  }, `AgentHist Skill\n\n${renderTargets(result.items)}`, globals.json);
+  }, `${colorizeHuman("AgentHist Skill", "section", globals.color)}\n\n` +
+    renderTargets(result.items, globals.color), globals.json);
 }

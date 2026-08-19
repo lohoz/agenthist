@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 
 import {
+  agentLabel,
   listCodexHistoryProviders,
   listNativeTransactions,
   recoverNativeTransaction,
@@ -9,6 +10,7 @@ import {
   type CodexProviderHistoryOptions,
 } from "../application/index.js";
 import {
+  colorizeHuman,
   invalidArguments,
   readValue,
   success,
@@ -18,6 +20,12 @@ import {
 } from "./command-support.js";
 
 const DEFAULT_CODEX_PROVIDER = "openai";
+
+function transactionTone(state: string): "success" | "warning" | "error" {
+  if (state === "committed" || state === "rolled_back" || state === "recovered") return "success";
+  if (state === "failed" || state === "recovery_required") return "error";
+  return "warning";
+}
 
 function transactionSummary(summary: Awaited<ReturnType<typeof listNativeTransactions>>[number]): Record<string, unknown> {
   return {
@@ -40,12 +48,15 @@ export async function runTransaction(globals: GlobalOptions, args: readonly stri
     if (args.length !== 1) throw invalidArguments("transaction list accepts no arguments");
     const transactions = await listNativeTransactions(globals.stateDirectory);
     const human = transactions.map((item) =>
-      `${item.transactionRef}  ${item.operation}  ${item.state}/${item.phase}  ${item.itemCount} item(s)\n`
+      `${colorizeHuman(item.transactionRef, "muted", globals.color)}  ` +
+      `${colorizeHuman(item.operation, "info", globals.color)}  ` +
+      `${colorizeHuman(`${item.state}/${item.phase}`, transactionTone(item.state), globals.color)}  ` +
+      `${item.itemCount} item(s)\n`
     ).join("");
     return success(
       "transaction list",
       { transactions: transactions.map(transactionSummary) },
-      `${human}${transactions.length} transaction(s)\n`,
+      `${human}${colorizeHuman(`${transactions.length} transaction(s)`, "muted", globals.color)}\n`,
       globals.json,
     );
   }
@@ -89,8 +100,14 @@ export async function runTransaction(globals: GlobalOptions, args: readonly stri
   return success(
     `transaction ${action}`,
     data,
-    `${result.preview.ready ? "ready" : "blocked"}  ${reference}  ${result.preview.items} item(s)\n` +
-      (result.dryRun ? "No changes applied.\n" : `${result.transaction.state}.\n`),
+    `${colorizeHuman(
+      result.preview.ready ? "ready" : "blocked",
+      result.preview.ready ? "success" : "error",
+      globals.color,
+    )}  ${colorizeHuman(reference, "muted", globals.color)}  ${result.preview.items} item(s)\n` +
+      (result.dryRun
+        ? `${colorizeHuman("No changes applied.", "muted", globals.color)}\n`
+        : `${colorizeHuman(result.transaction.state, transactionTone(result.transaction.state), globals.color)}.\n`),
     globals.json,
   );
 }
@@ -119,7 +136,8 @@ export async function runCodex(
     if (args.length !== 2) throw invalidArguments("codex provider list accepts no arguments");
     const result = await listCodexHistoryProviders(codexProviderOptions(globals, runtime));
     const human = result.providers.map((item) =>
-      `${item.current ? "*" : " "} ${item.provider}  ${item.sessions} session(s)\n`
+      `${item.current ? colorizeHuman("*", "success", globals.color) : " "} ` +
+      `${colorizeHuman(item.provider, "info", globals.color)}  ${item.sessions} session(s)\n`
     ).join("");
     return success(
       "codex provider list",
@@ -128,7 +146,8 @@ export async function runCodex(
         total_sessions: result.totalSessions,
         providers: result.providers,
       },
-      `${human}${result.providers.length} provider(s)\n`,
+      `${colorizeHuman(`${agentLabel("codex")} providers`, "section", globals.color)}\n` +
+        `${human}${colorizeHuman(`${result.providers.length} provider(s)`, "muted", globals.color)}\n`,
       globals.json,
     );
   }
@@ -173,8 +192,13 @@ export async function runCodex(
   return success(
     "codex provider unify",
     data,
-    `${result.dryRun ? "Would change" : "Changed"} ${result.changed} session(s) to ${result.targetProvider}; ` +
-      `${result.unchanged} already unified.\n${result.dryRun ? "No changes applied.\n" : ""}`,
+    `${colorizeHuman(
+      result.dryRun ? "Would change" : "Changed",
+      result.dryRun ? "warning" : "success",
+      globals.color,
+    )} ${result.changed} session(s) to ${colorizeHuman(result.targetProvider, "info", globals.color)}; ` +
+      `${result.unchanged} already unified.\n` +
+      (result.dryRun ? `${colorizeHuman("No changes applied.", "muted", globals.color)}\n` : ""),
     globals.json,
   );
 }

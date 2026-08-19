@@ -73,6 +73,7 @@ function parseGlobals(args: readonly string[], runtime: CliRuntime): [GlobalOpti
   return [
     {
       json,
+      color: runtime.color === true,
       stateDirectory,
       ...(codexHome === undefined ? {} : { codexHome }),
       ...(sqliteHome === undefined ? {} : { sqliteHome }),
@@ -88,7 +89,7 @@ function parseGlobals(args: readonly string[], runtime: CliRuntime): [GlobalOpti
 
 export async function runCli(args: readonly string[], runtime: CliRuntime = {}): Promise<CliResult> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    return { exitCode: 0, stdout: rootHelp(), stderr: "" };
+    return { exitCode: 0, stdout: rootHelp(runtime.color === true), stderr: "" };
   }
   if (args[0] === "--version" || args[0] === "-v") {
     return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
@@ -101,9 +102,11 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
     json = globals.json;
     attemptedCommand = command ?? "unknown";
     if (command === "help" || command === "--help" || command === "-h") {
-      if (commandArgs.length === 1) return { exitCode: 0, stdout: rootHelp(), stderr: "" };
+      if (commandArgs.length === 1) {
+        return { exitCode: 0, stdout: rootHelp(globals.color && !globals.json), stderr: "" };
+      }
       if (commandArgs.length !== 2) throw invalidArguments("help accepts at most one command");
-      const help = commandHelp(commandArgs[1]!);
+      const help = commandHelp(commandArgs[1]!, globals.color && !globals.json);
       if (help === undefined) throw invalidArguments(`unknown help command: ${commandArgs[1]}`);
       return { exitCode: 0, stdout: help, stderr: "" };
     }
@@ -112,7 +115,7 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
       return { exitCode: 0, stdout: `${VERSION}\n`, stderr: "" };
     }
     if (commandArgs.slice(1).some((argument) => argument === "--help" || argument === "-h")) {
-      const help = command === undefined ? undefined : commandHelp(command);
+      const help = command === undefined ? undefined : commandHelp(command, globals.color && !globals.json);
       if (help === undefined) throw invalidArguments(`unknown help command: ${command ?? ""}`);
       return { exitCode: 0, stdout: help, stderr: "" };
     }
@@ -128,6 +131,6 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
     if (command === "codex") return await runCodex(globals, commandArgs.slice(1), runtime);
     throw invalidArguments(`unknown command: ${command ?? ""}`);
   } catch (error) {
-    return failure(attemptedCommand, error, json);
+    return failure(attemptedCommand, error, json, runtime.color === true);
   }
 }

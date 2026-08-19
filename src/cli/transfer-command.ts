@@ -36,11 +36,15 @@ import {
   type ImportWizardLanguage,
 } from "./import-wizard/copy.js";
 
-function renderHumanLossFindings(findings: readonly ConversionFinding[]): string {
+function renderHumanLossFindings(findings: readonly ConversionFinding[], color: boolean): string {
   const losses = findings.filter((finding) => finding.disposition !== "exact");
   return renderBoundedHumanDetails(
     losses,
-    (finding) => `    ${finding.disposition}  ${finding.code}  x${finding.count}\n`,
+    (finding) => `    ${colorizeHuman(
+      finding.disposition,
+      finding.disposition === "blocked" ? "error" : "warning",
+      color,
+    )}  ${colorizeHuman(finding.code, "muted", color)}  x${finding.count}\n`,
     "finding",
   );
 }
@@ -49,47 +53,73 @@ function renderImportHuman(file: string, result: ImportHistoryResult, color: boo
   const heading = result.status === "blocked"
     ? "Import blocked"
     : result.mode === "dry_run" ? "Import plan" : "Import complete";
-  const routeHuman = `Routes:\n${result.routes.map((route) => {
+  const headingTone = result.status === "blocked" ? "error_strong" : result.mode === "dry_run"
+    ? "warning_strong"
+    : "success";
+  const routeHuman = `${colorizeHuman("Routes:", "section", color)}\n${result.routes.map((route) => {
     const label = route.sourceAgent === route.targetAgent
-      ? `${agentLabel(route.sourceAgent)} (native)`
-      : `${agentLabel(route.sourceAgent)} -> ${agentLabel(route.targetAgent)}  ${route.quality}`;
+      ? `${colorizeHuman(agentLabel(route.sourceAgent), "info", color)} ` +
+        `${colorizeHuman("(native)", "success", color)}`
+      : `${colorizeHuman(agentLabel(route.sourceAgent), "info", color)} -> ` +
+        `${colorizeHuman(agentLabel(route.targetAgent), "info", color)}  ` +
+        `${colorizeHuman(
+          route.quality,
+          route.quality === "blocked" ? "error" : route.quality === "degraded" ? "warning" : "success",
+          color,
+        )}`;
     return `  ${label}  ${route.sessions} session(s)\n` +
-      renderHumanLossFindings(route.findings);
+      renderHumanLossFindings(route.findings, color);
   }).join("")}`;
-  const workspaceHuman = `Workspace paths:\n${renderBoundedHumanDetails(
+  const workspaceHuman = `${colorizeHuman("Workspace paths:", "section", color)}\n${renderBoundedHumanDetails(
     result.workspaces,
     (workspace) => {
       if (workspace.status === "mapped") {
-        return `  ${colorizeHuman("> mapped", "info", color)}: ${workspace.source} -> ${workspace.target} ` +
+        return `  ${colorizeHuman("> mapped", "info", color)}: ` +
+          `${colorizeHuman(workspace.source, "muted", color)} -> ` +
+          `${colorizeHuman(workspace.target, "muted", color)} ` +
           `(${workspace.sessions} session(s))\n`;
       }
-      return `  ${colorizeHuman("= unchanged", "success", color)}: ${workspace.source} ` +
+      return `  ${colorizeHuman("= unchanged", "success", color)}: ` +
+        `${colorizeHuman(workspace.source, "muted", color)} ` +
         `(${workspace.sessions} session(s))\n`;
     },
     "workspace",
   )}`;
-  const resourceHuman = result.resources.length === 0 ? "" : `${result.resources.length} managed resource(s).\n`;
-  const blockedHuman = result.blockedSessions.length === 0 ? "" : `Blocked sessions:\n${renderBoundedHumanDetails(
+  const resourceHuman = result.resources.length === 0
+    ? ""
+    : `${colorizeHuman(`${result.resources.length} managed resource(s).`, "info", color)}\n`;
+  const blockedHuman = result.blockedSessions.length === 0
+    ? ""
+    : `${colorizeHuman("Blocked sessions:", "error_strong", color)}\n${renderBoundedHumanDetails(
     result.blockedSessions,
-    (session) => `  ${session.sourceSessionRef}  ` +
-      `${agentLabel(session.sourceAgent)} -> ${agentLabel(session.targetAgent)}\n` +
-      renderHumanLossFindings(session.findings),
+    (session) => `  ${colorizeHuman(session.sourceSessionRef, "muted", color)}  ` +
+      `${colorizeHuman(agentLabel(session.sourceAgent), "info", color)} -> ` +
+      `${colorizeHuman(agentLabel(session.targetAgent), "info", color)}\n` +
+      renderHumanLossFindings(session.findings, color),
     "blocked session",
   )}\n`;
   const summaryHuman = result.status === "blocked"
-    ? `Blocked          ${result.blocked}\n\nNo changes written.\n`
+    ? `${colorizeHuman("Blocked".padEnd(17), "error", color)}${result.blocked}\n\n` +
+      `${colorizeHuman("No changes written.", "muted", color)}\n`
     : result.mode === "dry_run"
-      ? `Would import     ${result.newSessions} new\nAlready present  ${result.alreadyPresent}\n` +
-        `Blocked          0\n\nNo changes written.\n`
-      : `Imported         ${result.written} new\nAlready present  ${result.alreadyPresent}\nBlocked          0\n`;
+      ? `${colorizeHuman("Would import".padEnd(17), "warning", color)}${result.newSessions} new\n` +
+        `${colorizeHuman("Already present".padEnd(17), "muted", color)}${result.alreadyPresent}\n` +
+        `${colorizeHuman("Blocked".padEnd(17), "muted", color)}0\n\n` +
+        `${colorizeHuman("No changes written.", "muted", color)}\n`
+      : `${colorizeHuman("Imported".padEnd(17), "success", color)}${result.written} new\n` +
+        `${colorizeHuman("Already present".padEnd(17), "muted", color)}${result.alreadyPresent}\n` +
+        `${colorizeHuman("Blocked".padEnd(17), "muted", color)}0\n`;
   const transactionHuman = result.mode !== "apply" || result.status !== "completed"
     ? ""
     : result.agents.flatMap((agentResult) => agentResult.transactionRef === undefined
       ? []
-      : [`  ${agentLabel(agentResult.agent)}  ${agentResult.transactionRef}\n`]).join("");
-  return `${heading}\n\nArchive       ${file}\nSelected      ${result.selectedSessions} sessions\n\n` +
+      : [`  ${colorizeHuman(agentLabel(agentResult.agent), "info", color)}  ` +
+        `${colorizeHuman(agentResult.transactionRef, "muted", color)}\n`]).join("");
+  return `${colorizeHuman(heading, headingTone, color)}\n\n` +
+    `${colorizeHuman("Archive".padEnd(14), "muted", color)}${colorizeHuman(file, "muted", color)}\n` +
+    `${colorizeHuman("Selected".padEnd(14), "muted", color)}${result.selectedSessions} sessions\n\n` +
     `${routeHuman}\n${workspaceHuman}\n${resourceHuman}${blockedHuman}${summaryHuman}` +
-    (transactionHuman === "" ? "" : `\nTransactions:\n${transactionHuman}`);
+    (transactionHuman === "" ? "" : `\n${colorizeHuman("Transactions:", "section", color)}\n${transactionHuman}`);
 }
 
 export async function runExport(
@@ -140,8 +170,11 @@ export async function runExport(
       objects: result.objects,
       resources: result.resources,
     },
-    `Exported ${result.entries} session(s) to ${result.file}\n` +
-      result.agents.map((item) => `  ${item.agent}  ${item.sessions} session(s)\n`).join(""),
+    `${colorizeHuman("Exported", "success", globals.color)} ${result.entries} session(s) to ` +
+      `${colorizeHuman(result.file, "muted", globals.color)}\n` +
+      result.agents.map((item) =>
+        `  ${colorizeHuman(agentLabel(item.agent), "info", globals.color)}  ${item.sessions} session(s)\n`
+      ).join(""),
     globals.json,
   );
 }
@@ -215,16 +248,26 @@ export async function runInspect(
     })),
   }));
   const humanEntries = entries.map((entry) => {
-    return `${entry.session_ref}  ${entry.agent}  ${entry.title || "(untitled)"}\n`;
+    return `${colorizeHuman(entry.session_ref, "muted", globals.color)}  ` +
+      `${colorizeHuman(agentLabel(entry.agent), "info", globals.color)}  ${entry.title || "(untitled)"}\n`;
   }).join("");
-  const workspaceHuman = `Workspaces:\n${renderBoundedHumanDetails(
+  const workspaceHuman = `${colorizeHuman("Workspaces:", "section", globals.color)}\n${renderBoundedHumanDetails(
     result.workspaces,
-    (workspace) => `  ${workspace.source}  ${workspace.sessions} session(s)  ${workspace.agents.join(",")}\n`,
+    (workspace) => `  ${colorizeHuman(workspace.source, "muted", globals.color)}  ` +
+      `${workspace.sessions} session(s)  ` +
+      `${workspace.agents.map((agent) => colorizeHuman(agentLabel(agent), "info", globals.color)).join(", ")}\n`,
     "workspace",
   )}`;
-  const human = `${workspaceHuman}${humanEntries}${result.returnedEntries} of ${result.totalEntries} session(s); ` +
-    `${result.remainingEntries} remaining.\n` +
-    (result.nextCursor === undefined ? "" : `next cursor: ${result.nextCursor}\n`);
+  const human = `${workspaceHuman}${humanEntries}` +
+    `${colorizeHuman(
+      `${result.returnedEntries} of ${result.totalEntries} session(s); ${result.remainingEntries} remaining.`,
+      "muted",
+      globals.color,
+    )}\n` +
+    (result.nextCursor === undefined
+      ? ""
+      : `${colorizeHuman("next cursor:", "muted", globals.color)} ` +
+        `${colorizeHuman(result.nextCursor, "muted", globals.color)}\n`);
   return success(
     "inspect",
     {
@@ -470,7 +513,8 @@ export async function runImport(
         return success(
           "import",
           { status: "cancelled", written: 0 },
-          "Import cancelled.\nNo changes written.\n",
+          `${colorizeHuman("Import cancelled.", "warning", runtime.color === true)}\n` +
+            `${colorizeHuman("No changes written.", "muted", runtime.color === true)}\n`,
           false,
         );
       }

@@ -19,10 +19,7 @@ import {
   type CliRuntime,
   type GlobalOptions,
 } from "./command-support.js";
-
-function labeled(label: string, value: string, color: boolean): string {
-  return `${colorizeHuman(`${label}:`, "muted", color)} ${value}\n`;
-}
+import { humanCount, humanFields, humanSection, humanTitle, type HumanField } from "./human-output.js";
 
 function tokenValue(value: string, flag: string): number {
   if (!/^(?:0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -31,17 +28,24 @@ function tokenValue(value: string, flag: string): number {
   return Number(value);
 }
 
-function scopeSummary(selection: ExperienceHistorySelection, sessions: number, color: boolean): string {
-  if (selection.mode === "all") return labeled("Scope", "all active and archived history", color);
-  if (selection.mode === "session") return labeled("Scope", `${sessions} explicit session(s)`, color);
+function scopeFields(selection: ExperienceHistorySelection, sessions: number): HumanField[] {
+  if (selection.mode === "all") return [{ label: "Scope", value: "All active and archived history" }];
+  if (selection.mode === "session") {
+    return [{ label: "Scope", value: `${humanCount(sessions, "explicit session")}` }];
+  }
   if (selection.workspaces.length === 1) {
     const workspace = selection.workspaces[0]!;
     const label = selection.defaultedToCurrentWorkspace ? "current workspace" : "workspace";
-    return labeled("Scope", `${label} ${JSON.stringify(workspace.path)} (${sessions} session(s))`, color);
+    return [{ label: "Scope", value: `${label} ${JSON.stringify(workspace.path)} · ${humanCount(sessions, "session")}` }];
   }
-  return labeled("Scope", `${selection.workspaces.length} workspaces (${sessions} unique session(s))`, color) +
-    labeled("Workspaces", selection.workspaces.map((workspace) =>
-      `${JSON.stringify(workspace.path)} (${workspace.sessions})`).join(", "), color);
+  return [{
+    label: "Scope",
+    value: `${selection.workspaces.length} workspaces · ${sessions} unique sessions`,
+  }, {
+    label: "Workspaces",
+    value: selection.workspaces.map((workspace) =>
+      `${JSON.stringify(workspace.path)} · ${humanCount(workspace.sessions, "session")}`).join("\n"),
+  }];
 }
 
 async function runModelCheck(
@@ -61,16 +65,18 @@ async function runModelCheck(
   const fast = result.profiles[0]!;
   const deep = result.profiles[1]!;
   const modelLabel = (profile: typeof fast): string => profile.modelConfigured ? profile.model : "Agent default";
-  const human =
-    `${colorizeHuman("Experience model check", "section", globals.color)}\n` +
-    labeled("Evidence", `${colorizeHuman("ok", "success", globals.color)} ` +
-      `(${modelLabel(fast)}, ${fast.endpoint})`, globals.color) +
-    (deep.binding === "fast"
-      ? labeled("Organizer", `uses evidence model (${modelLabel(deep)}); no additional check request`, globals.color)
-      : labeled("Organizer", `${colorizeHuman("ok", "success", globals.color)} ` +
-        `(${modelLabel(deep)}, ${deep.endpoint})`, globals.color)) +
-    labeled("Requests", String(result.requests), globals.color) +
-    `${colorizeHuman("No Agent history was sent.", "muted", globals.color)}\n`;
+  const human = humanTitle("Experience model check", globals.color) + "\n" + humanFields([
+    { label: "Status", value: "READY", tone: "success" },
+    { label: "Evidence", value: `${modelLabel(fast)} · ${fast.endpoint}` },
+    {
+      label: "Organizer",
+      value: deep.binding === "fast"
+        ? `${modelLabel(deep)} · uses the evidence model`
+        : `${modelLabel(deep)} · ${deep.endpoint}`,
+    },
+    { label: "Requests", value: String(result.requests) },
+    { label: "History", value: "Not sent", tone: "muted" },
+  ], globals.color);
   return success("experience", {
     operation: "model_check",
     profiles: result.profiles.map((profile) => ({
@@ -204,65 +210,87 @@ async function runReview(
       ...(runtime.fetcher === undefined ? {} : { fetcher: runtime.fetcher }),
       ...(runtime.analysisProcessRunner === undefined ? {} : { processRunner: runtime.analysisProcessRunner }),
     });
-    const continuation = result.review === undefined
-      ? `${colorizeHuman(
-          "Experience extraction is incomplete; rerun the same command to continue from cache.",
-          "warning",
-          globals.color,
-        )}\n`
-      : "";
-    const publication = result.review === undefined
-      ? ""
-      : labeled("Output", colorizeHuman(result.review.publication.directory, "success", globals.color), globals.color) +
-        labeled(
-          "Next",
-          "open a new session with this directory as context to verify, merge, rewrite, or reject the candidates.",
-          globals.color,
-        );
     const consolidationTone = result.consolidation.status === "completed" || result.consolidation.status === "not_needed"
       ? "success"
       : "warning";
-    const human =
-      `${colorizeHuman("Experience extraction", "section", globals.color)}\n` +
-      scopeSummary(result.selection, result.corpus.sessions, globals.color) +
-      labeled("Corpus", `${result.corpus.sessions} session(s), ${result.corpus.lineages} lineage(s), ` +
-        `${result.corpus.projects} project(s)`, globals.color) +
-      labeled("Evidence", `${result.fast.availableCards}/${result.fast.totalCards} card(s), ` +
-        `${result.fast.evidenceEvents} event(s); ${result.fast.requests} request(s), ` +
-        `${result.fast.usage.inputTokens} input / ${result.fast.usage.outputTokens} output tokens`, globals.color) +
-      labeled("Candidate organization", `(${colorizeHuman(
-        result.consolidation.status,
-        consolidationTone,
-        globals.color,
-      )}) ${result.consolidation.groups} candidate(s), ` +
-        `${result.consolidation.unroutedOccurrences} unrouted event(s); ${result.consolidation.requests} request(s), ` +
-        `${result.consolidation.usage.inputTokens} input / ` +
-        `${result.consolidation.usage.outputTokens} output tokens`, globals.color) +
-      continuation + publication;
+    const human = humanTitle("Experience extraction", globals.color) + "\n" + humanFields([
+      {
+        label: "Status",
+        value: result.review === undefined ? "INCOMPLETE" : "COMPLETE",
+        tone: result.review === undefined ? "warning_strong" : "success",
+      },
+      ...scopeFields(result.selection, result.corpus.sessions),
+    ], globals.color) + "\n" + humanSection("Corpus", globals.color) + humanFields([
+      { label: "Sessions", value: String(result.corpus.sessions) },
+      { label: "Lineages", value: String(result.corpus.lineages) },
+      { label: "Projects", value: String(result.corpus.projects) },
+    ], globals.color) + "\n" + humanSection("Evidence", globals.color) + humanFields([
+      { label: "Cards", value: `${result.fast.availableCards}/${result.fast.totalCards}` },
+      { label: "Events", value: String(result.fast.evidenceEvents) },
+      { label: "Requests", value: String(result.fast.requests) },
+      {
+        label: "Tokens",
+        value: `${result.fast.usage.inputTokens} input · ${result.fast.usage.outputTokens} output`,
+      },
+    ], globals.color) + "\n" + humanSection("Candidates", globals.color) + humanFields([
+      { label: "Status", value: result.consolidation.status.toUpperCase(), tone: consolidationTone },
+      { label: "Groups", value: String(result.consolidation.groups) },
+      { label: "Unrouted", value: String(result.consolidation.unroutedOccurrences) },
+      { label: "Requests", value: String(result.consolidation.requests) },
+      {
+        label: "Tokens",
+        value: `${result.consolidation.usage.inputTokens} input · ` +
+          `${result.consolidation.usage.outputTokens} output`,
+      },
+    ], globals.color) + (result.review === undefined
+      ? "\n" + colorizeHuman(
+          "Rerun the same command to continue from the cached progress.",
+          "warning",
+          globals.color,
+        ) + "\n"
+      : "\n" + humanSection("Output", globals.color) + humanFields([
+          { label: "Directory", value: result.review.publication.directory, tone: "success" },
+          {
+            label: "Next",
+            value: "Open a new session with this directory as context to verify, merge, rewrite, or reject candidates.",
+          },
+        ], globals.color));
     return success("experience", experienceReviewResultJson(result), human, globals.json);
   }
   const result = await dryRunExperienceReview(options);
   const corpus = result.corpus;
   const plan = result.plan;
-  const human =
-    `${colorizeHuman("Experience extraction", "section", globals.color)}  ` +
-      `${colorizeHuman("DRY-RUN", "warning_strong", globals.color)}\n` +
-    scopeSummary(result.selection, corpus.sessions, globals.color) +
-    labeled("Corpus", `${corpus.sessions} session(s), ${corpus.lineages} lineage(s), ` +
-      `${corpus.projects} project(s), ${corpus.beats} beat(s), ${corpus.cards} card(s)`, globals.color) +
-    labeled("Queue", `${corpus.queuedCards} card(s) after folding ` +
-      `${corpus.foldedDuplicateCards} proven duplicate(s)`, globals.color) +
-    labeled("Index", `${result.index.rebuiltSessions} rebuilt, ${result.index.reusedSessions} reused, ` +
-      `${result.index.removedSessions} removed`, globals.color) +
-    labeled("Evidence plan", `${plan.selectedCards}/${plan.totalCards} card(s), ${plan.fastRequests} request(s), ` +
-      `~${plan.estimatedFastInputTokens}/${plan.maximumInputTokens} input tokens`, globals.color) +
-    labeled("Candidate organization upper bound", `${plan.deepInputTokensUpperBound}/` +
-      `${plan.maximumDeepInputTokens} input tokens`, globals.color) +
-    `${colorizeHuman(
-      "No model configuration was read, no output directory was created, and no network request was made.",
-      "muted",
-      globals.color,
-    )}\n`;
+  const human = humanTitle("Experience extraction plan", globals.color) + "\n" + humanFields([
+    { label: "Status", value: "DRY RUN", tone: "warning_strong" },
+    ...scopeFields(result.selection, corpus.sessions),
+  ], globals.color) + "\n" + humanSection("Corpus", globals.color) + humanFields([
+    { label: "Sessions", value: String(corpus.sessions) },
+    { label: "Lineages", value: String(corpus.lineages) },
+    { label: "Projects", value: String(corpus.projects) },
+    { label: "Beats", value: String(corpus.beats) },
+    { label: "Cards", value: String(corpus.cards) },
+    { label: "Queued", value: String(corpus.queuedCards) },
+    { label: "Folded", value: String(corpus.foldedDuplicateCards) },
+  ], globals.color) + "\n" + humanSection("Index", globals.color) + humanFields([
+    { label: "Rebuilt", value: String(result.index.rebuiltSessions) },
+    { label: "Reused", value: String(result.index.reusedSessions) },
+    { label: "Removed", value: String(result.index.removedSessions) },
+  ], globals.color) + "\n" + humanSection("Model plan", globals.color) + humanFields([
+    { label: "Evidence cards", value: `${plan.selectedCards}/${plan.totalCards}` },
+    { label: "Evidence requests", value: String(plan.fastRequests) },
+    {
+      label: "Evidence tokens",
+      value: `~${plan.estimatedFastInputTokens}/${plan.maximumInputTokens} input`,
+    },
+    {
+      label: "Candidate tokens",
+      value: `${plan.deepInputTokensUpperBound}/${plan.maximumDeepInputTokens} input upper bound`,
+    },
+  ], globals.color) + "\n" + colorizeHuman(
+    "No model configuration, output files, or network requests were used.",
+    "muted",
+    globals.color,
+  ) + "\n";
   return success("experience", {
     dry_run: result.dryRun,
     selection: {

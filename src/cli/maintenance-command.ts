@@ -13,13 +13,17 @@ import {
   colorizeHuman,
   invalidArguments,
   readValue,
+  renderBoundedHumanDetails,
   success,
   type CliResult,
   type CliRuntime,
   type GlobalOptions,
 } from "./command-support.js";
+import { humanCount, humanFields, humanSection, humanTitle } from "./human-output.js";
+import { displayWidth, padDisplay } from "./terminal-layout.js";
 
 const DEFAULT_CODEX_PROVIDER = "openai";
+const TRANSACTION_DISPLAY_LIMIT = 20;
 
 function transactionTone(state: string): "success" | "warning" | "error" {
   if (state === "committed" || state === "rolled_back" || state === "recovered") return "success";
@@ -47,16 +51,22 @@ export async function runTransaction(globals: GlobalOptions, args: readonly stri
   if (action === "list") {
     if (args.length !== 1) throw invalidArguments("transaction list accepts no arguments");
     const transactions = await listNativeTransactions(globals.stateDirectory);
-    const human = transactions.map((item) =>
-      `${colorizeHuman(item.transactionRef, "muted", globals.color)}  ` +
-      `${colorizeHuman(item.operation, "info", globals.color)}  ` +
-      `${colorizeHuman(`${item.state}/${item.phase}`, transactionTone(item.state), globals.color)}  ` +
-      `${item.itemCount} item(s)\n`
-    ).join("");
+    const human = renderBoundedHumanDetails(
+      transactions,
+      (item) => `  ${colorizeHuman(item.transactionRef, "strong", globals.color)}\n` +
+        `    ${colorizeHuman(item.operation, "info", globals.color)} · ` +
+        `${item.agents.map(agentLabel).join(" + ")} · ` +
+        `${colorizeHuman(`${item.state}/${item.phase}`, transactionTone(item.state), globals.color)} · ` +
+        `${humanCount(item.itemCount, "item")} · ${colorizeHuman(item.updatedAt, "muted", globals.color)}\n`,
+      "transaction",
+      TRANSACTION_DISPLAY_LIMIT,
+    );
     return success(
       "transaction list",
       { transactions: transactions.map(transactionSummary) },
-      `${human}${colorizeHuman(`${transactions.length} transaction(s)`, "muted", globals.color)}\n`,
+      humanTitle("Transactions", globals.color) + "\n" + humanFields([
+        { label: "Count", value: String(transactions.length) },
+      ], globals.color) + (human === "" ? "\nNo transactions found.\n" : `\n${human}`),
       globals.json,
     );
   }
@@ -97,17 +107,44 @@ export async function runTransaction(globals: GlobalOptions, args: readonly stri
     })),
     ...(result.transaction === undefined ? {} : { transaction: transactionSummary(result.transaction) }),
   };
+  const findings = result.preview.findings.length === 0 ? "" : "\n" + humanSection("Target state", globals.color) +
+    renderBoundedHumanDetails(
+      result.preview.findings,
+      (finding) => {
+        const positions = [
+          `row ${finding.row}`,
+          ...(finding.section === undefined ? [] : [`section ${finding.section}`]),
+          ...(finding.file === undefined ? [] : [`file ${finding.file}`]),
+          ...(finding.resources === undefined ? [] : [`resources ${finding.resources}`]),
+          ...(finding.goal === undefined ? [] : [`goal ${finding.goal}`]),
+        ];
+        return `  ${colorizeHuman(finding.sessionRef, "strong", globals.color)}\n` +
+          `    ${positions.join(" · ")}\n`;
+      },
+      "finding",
+    );
   return success(
     `transaction ${action}`,
     data,
-    `${colorizeHuman(
-      result.preview.ready ? "ready" : "blocked",
-      result.preview.ready ? "success" : "error",
-      globals.color,
-    )}  ${colorizeHuman(reference, "muted", globals.color)}  ${result.preview.items} item(s)\n` +
+    humanTitle(`${action === "rollback" ? "Rollback" : "Recovery"} ` +
+      `${result.dryRun ? "plan" : "complete"}`, globals.color) + "\n" + humanFields([
+      {
+        label: "Status",
+        value: result.preview.ready ? "READY" : "BLOCKED",
+        tone: result.preview.ready ? "success" : "error_strong",
+      },
+      { label: "Transaction", value: reference },
+      { label: "Operation", value: result.preview.operation },
+      { label: "Items", value: String(result.preview.items) },
+      ...(result.dryRun ? [] : [{
+        label: "State",
+        value: result.transaction.state,
+        tone: transactionTone(result.transaction.state),
+      }]),
+    ], globals.color) + findings + "\n" +
       (result.dryRun
-        ? `${colorizeHuman("No changes applied.", "muted", globals.color)}\n`
-        : `${colorizeHuman(result.transaction.state, transactionTone(result.transaction.state), globals.color)}.\n`),
+        ? `${colorizeHuman("No changes written.", "muted", globals.color)}\n`
+        : `${colorizeHuman("Native history updated.", "success", globals.color)}\n`),
     globals.json,
   );
 }
@@ -135,9 +172,15 @@ export async function runCodex(
   if (action === "list") {
     if (args.length !== 2) throw invalidArguments("codex provider list accepts no arguments");
     const result = await listCodexHistoryProviders(codexProviderOptions(globals, runtime));
+    const providerWidth = Math.max(0, ...result.providers.map((item) => displayWidth(item.provider)));
     const human = result.providers.map((item) =>
       `${item.current ? colorizeHuman("*", "success", globals.color) : " "} ` +
-      `${colorizeHuman(item.provider, "info", globals.color)}  ${item.sessions} session(s)\n`
+      `${colorizeHuman(
+        padDisplay(item.provider, providerWidth),
+        item.current ? "strong" : "plain",
+        globals.color,
+      )}  ` +
+      `${humanCount(item.sessions, "session")}\n`
     ).join("");
     return success(
       "codex provider list",
@@ -146,8 +189,11 @@ export async function runCodex(
         total_sessions: result.totalSessions,
         providers: result.providers,
       },
-      `${colorizeHuman(`${agentLabel("codex")} providers`, "section", globals.color)}\n` +
-        `${human}${colorizeHuman(`${result.providers.length} provider(s)`, "muted", globals.color)}\n`,
+      humanTitle(`${agentLabel("codex")} history providers`, globals.color) + "\n" + humanFields([
+        { label: "Current", value: result.currentProvider, tone: "success" },
+        { label: "Sessions", value: String(result.totalSessions) },
+        { label: "Providers", value: String(result.providers.length) },
+      ], globals.color) + (human === "" ? "" : `\n${human}`),
       globals.json,
     );
   }
@@ -189,16 +235,27 @@ export async function runCodex(
       after: change.after,
     })),
   };
+  const changes = result.changes.length === 0 ? "" : "\n" + humanSection("Changes", globals.color) +
+    renderBoundedHumanDetails(
+      result.changes,
+      (change) => `  ${colorizeHuman(change.sessionRef, "strong", globals.color)}\n` +
+        `    ${change.before} -> ${change.after}\n`,
+      "change",
+    );
   return success(
     "codex provider unify",
     data,
-    `${colorizeHuman(
-      result.dryRun ? "Would change" : "Changed",
-      result.dryRun ? "warning" : "success",
-      globals.color,
-    )} ${result.changed} session(s) to ${colorizeHuman(result.targetProvider, "info", globals.color)}; ` +
-      `${result.unchanged} already unified.\n` +
-      (result.dryRun ? `${colorizeHuman("No changes applied.", "muted", globals.color)}\n` : ""),
+    humanTitle(result.dryRun ? "Codex provider plan" : "Codex providers unified", globals.color) + "\n" +
+      humanFields([
+        { label: "Target", value: result.targetProvider, tone: "info" },
+        { label: result.dryRun ? "Would change" : "Changed", value: String(result.changed) },
+        { label: "Unchanged", value: String(result.unchanged) },
+        ...(result.transactionRef === undefined
+          ? []
+          : [{ label: "Transaction", value: result.transactionRef }]),
+      ], globals.color) + changes + (result.dryRun
+        ? `\n${colorizeHuman("No changes written.", "muted", globals.color)}\n`
+        : ""),
     globals.json,
   );
 }

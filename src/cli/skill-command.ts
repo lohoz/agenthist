@@ -9,7 +9,10 @@ import {
   type CliResult,
   type CliRuntime,
   type GlobalOptions,
+  type HumanTone,
 } from "./command-support.js";
+import { humanFields, humanSection, humanTitle } from "./human-output.js";
+import { displayWidth, padDisplay } from "./terminal-layout.js";
 
 interface SkillTargetResult {
   readonly agents: readonly Agent[];
@@ -19,15 +22,21 @@ interface SkillTargetResult {
 }
 
 function renderTargets(items: readonly SkillTargetResult[], color: boolean): string {
-  return items.map((item) => {
-    const agentsLabel = item.agents.map((agent) => colorizeHuman(agentLabel(agent), "info", color)).join(" + ");
-    const shared = item.shared ? colorizeHuman(" (shared)", "muted", color) : "";
-    const tone = item.status === "installed" || item.status === "removed"
+  const rows = items.map((item) => {
+    const agentsLabel = item.agents.map(agentLabel).join(" + ");
+    const shared = item.shared ? " (shared)" : "";
+    const tone: HumanTone = item.status === "installed" || item.status === "updated" || item.status === "replaced" ||
+      item.status === "removed"
       ? "success"
       : item.status === "preserved" ? "warning" : "muted";
-    return `  ${colorizeHuman(item.status.padEnd(10), tone, color)} ${agentsLabel}${shared}\n` +
-      `             ${colorizeHuman(item.directory, "muted", color)}\n`;
-  }).join("");
+    return { item, label: agentsLabel + shared, tone };
+  });
+  const width = Math.max(0, ...rows.map((row) => displayWidth(row.label)));
+  return rows.map(({ item, label, tone }) =>
+    `  ${colorizeHuman(padDisplay(label, width), "strong", color)}  ` +
+      `${colorizeHuman(item.status.toUpperCase(), tone, color)}\n` +
+      `    ${colorizeHuman(item.directory, "muted", color)}\n`
+  ).join("");
 }
 
 export async function runSkill(
@@ -50,7 +59,9 @@ export async function runSkill(
     return success("skill", {
       operation: "uninstall",
       targets: result.items,
-    }, `${colorizeHuman("AgentHist Skill", "section", globals.color)}\n\n` +
+    }, humanTitle("AgentHist Skill removed", globals.color) + "\n" + humanFields([
+      { label: "Targets", value: String(result.items.length) },
+    ], globals.color) + "\n" + humanSection("Locations", globals.color) +
       renderTargets(result.items, globals.color), globals.json);
   }
 
@@ -82,6 +93,8 @@ export async function runSkill(
   return success("skill", {
     operation: "install",
     targets: result.items,
-  }, `${colorizeHuman("AgentHist Skill", "section", globals.color)}\n\n` +
+  }, humanTitle("AgentHist Skill installed", globals.color) + "\n" + humanFields([
+    { label: "Targets", value: String(result.items.length) },
+  ], globals.color) + "\n" + humanSection("Locations", globals.color) +
     renderTargets(result.items, globals.color), globals.json);
 }

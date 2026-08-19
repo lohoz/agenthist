@@ -6,6 +6,34 @@ import {
   mapAbsolutePath,
   parsePathMappings,
 } from "../../../src/domain/path-mapping.js";
+import { samePath } from "../../../src/domain/host-path.js";
+
+test("Windows path identity accepts equivalent verbatim paths", () => {
+  assert.equal(
+    samePath(
+      String.raw`C:\Users\Alice\.codex\sessions\rollout.jsonl`,
+      String.raw`\\?\c:\users\alice\.codex\sessions\rollout.jsonl`,
+      "windows",
+    ),
+    true,
+  );
+  assert.equal(
+    samePath(
+      String.raw`\\server\share\.codex\sessions\rollout.jsonl`,
+      String.raw`\\?\UNC\SERVER\SHARE\.codex\sessions\rollout.jsonl`,
+      "windows",
+    ),
+    true,
+  );
+  assert.equal(
+    samePath(
+      String.raw`C:\Users\Alice\.codex\sessions\first.jsonl`,
+      String.raw`\\?\C:\Users\Alice\.codex\sessions\second.jsonl`,
+      "windows",
+    ),
+    false,
+  );
+});
 
 test("path mappings translate POSIX and Windows roots by path semantics", () => {
   const windows = parsePathMappings([

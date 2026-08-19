@@ -21,8 +21,17 @@ export function isAbsolutePath(value: string, flavor: PathFlavor): boolean {
   return !value.includes("\0") && pathImplementation(flavor).isAbsolute(value);
 }
 
+function comparableWindowsPath(value: string): string {
+  const normalized = path.win32.normalize(value);
+  if (/^\\\\\?\\UNC\\/i.test(normalized)) return `\\\\${normalized.slice(8)}`;
+  if (/^\\\\\?\\[A-Za-z]:\\/.test(normalized)) return normalized.slice(4);
+  return normalized;
+}
+
 export function pathIdentity(value: string, flavor: PathFlavor): string {
-  const normalized = pathImplementation(flavor).normalize(value);
+  const normalized = flavor === "windows"
+    ? comparableWindowsPath(value)
+    : path.posix.normalize(value);
   return flavor === "windows" ? normalized.toLowerCase() : normalized;
 }
 

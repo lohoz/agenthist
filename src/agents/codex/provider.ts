@@ -123,7 +123,10 @@ async function providerInventory(options: CodexSourceOptions): Promise<ProviderI
     const cwd = threadString(thread, "cwd");
     const rolloutPath = threadString(thread, "rollout_path");
     if (provider === "" || provider !== parsed.provider) throw new Error(`Codex provider disagrees for session: ${parsed.nativeId}`);
-    if (!path.isAbsolute(cwd) || cwd !== parsed.cwd) throw new Error(`Codex cwd disagrees for session: ${parsed.nativeId}`);
+    if (
+      !path.isAbsolute(cwd) || !path.isAbsolute(parsed.cwd) ||
+      !samePath(path.resolve(cwd), path.resolve(parsed.cwd), pathFlavorForPlatform())
+    ) throw new Error(`Codex cwd disagrees for session: ${parsed.nativeId}`);
     if (
       !path.isAbsolute(rolloutPath) ||
       !samePath(path.resolve(rolloutPath), path.resolve(rollout.sourcePath), pathFlavorForPlatform())

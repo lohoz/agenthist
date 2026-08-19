@@ -27,10 +27,10 @@ AgentHist 集中整理受支持的编程 Agent 会话，提供查看、搜索、
 
 | Agent | 查看与搜索 | 同工具迁移 | 转换到其他 Agent |
 | --- | --- | --- | --- |
-| Codex | ✓ | ✓ | ✓ |
-| Claude Code | ✓ | ✓ | ✓ |
-| OpenCode | ✓ | ✓ | ✓ |
-| Pi | ✓ | ✓ | ✓ |
+| [Codex](https://github.com/openai/codex) | ✓ | ✓ | ✓ |
+| [Claude Code](https://github.com/anthropics/claude-code) | ✓ | ✓ | ✓ |
+| [OpenCode](https://github.com/anomalyco/opencode) | ✓ | ✓ | ✓ |
+| [Pi](https://github.com/earendil-works/pi) | ✓ | ✓ | ✓ |
 
 ## 📦 安装
 

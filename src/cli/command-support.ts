@@ -53,6 +53,7 @@ export function invalidArguments(message: string): CliUsageError {
 const HUMAN_DETAIL_LIMIT = 50;
 
 export type HumanTone =
+  | "plain"
   | "strong"
   | "muted"
   | "section"
@@ -78,9 +79,10 @@ export function renderBoundedHumanDetails<T>(
   items: readonly T[],
   render: (item: T) => string,
   label: string,
+  limit = HUMAN_DETAIL_LIMIT,
 ): string {
-  const shown = items.slice(0, HUMAN_DETAIL_LIMIT).map(render).join("");
-  const remaining = items.length - Math.min(items.length, HUMAN_DETAIL_LIMIT);
+  const shown = items.slice(0, limit).map(render).join("");
+  const remaining = items.length - Math.min(items.length, limit);
   const omittedLabel = remaining === 1 ? label : `${label}s`;
   return shown + (remaining === 0
     ? ""

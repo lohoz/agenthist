@@ -1,7 +1,16 @@
 import { emitKeypressEvents } from "node:readline";
 
 import type { ImportWizardLanguage } from "./copy.js";
-import { sanitizeHumanOutput, sanitizeTerminalText } from "../terminal-safety.js";
+import { sanitizeHumanOutput } from "../terminal-safety.js";
+import { cleanTerminalText, displayWidth } from "../terminal-layout.js";
+export {
+  cleanTerminalText,
+  columns,
+  displayWidth,
+  padDisplay,
+  truncateDisplay,
+  wrapDisplay,
+} from "../terminal-layout.js";
 
 interface KeypressDescriptor {
   readonly name?: string;
@@ -29,98 +38,6 @@ export interface TerminalKey {
   readonly ctrl: boolean;
   readonly meta: boolean;
   readonly shift: boolean;
-}
-
-function wideCodePoint(codePoint: number): boolean {
-  return codePoint >= 0x1100 && (
-    codePoint <= 0x115f || codePoint === 0x2329 || codePoint === 0x232a ||
-    (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
-    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
-    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
-    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
-    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
-    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
-    (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
-    (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
-    (codePoint >= 0x20000 && codePoint <= 0x3fffd)
-  );
-}
-
-function characterWidth(character: string): number {
-  if (/\p{Mark}/u.test(character)) return 0;
-  const codePoint = character.codePointAt(0);
-  return codePoint !== undefined && wideCodePoint(codePoint) ? 2 : 1;
-}
-
-export function cleanTerminalText(value: string): string {
-  return sanitizeTerminalText(value);
-}
-
-export function displayWidth(value: string): number {
-  let width = 0;
-  for (const character of cleanTerminalText(value)) width += characterWidth(character);
-  return width;
-}
-
-export function truncateDisplay(value: string, maximum: number): string {
-  const text = cleanTerminalText(value).replace(/[\t\r\n]+/g, " ");
-  if (maximum <= 0) return "";
-  if (displayWidth(text) <= maximum) return text;
-  if (maximum <= 3) return ".".repeat(maximum);
-  let result = "";
-  let width = 0;
-  for (const character of text) {
-    const next = characterWidth(character);
-    if (width + next > maximum - 3) break;
-    result += character;
-    width += next;
-  }
-  return `${result}...`;
-}
-
-export function padDisplay(value: string, width: number): string {
-  return `${value}${" ".repeat(Math.max(0, width - displayWidth(value)))}`;
-}
-
-export function columns(left: string, right: string, width: number): string {
-  const maximum = Math.max(0, width);
-  if (maximum === 0) return "";
-  const rightText = truncateDisplay(right, Math.floor(maximum * 0.58));
-  if (rightText === "") return truncateDisplay(left, maximum);
-  const rightWidth = displayWidth(rightText);
-  const leftWidth = maximum - rightWidth - 2;
-  if (leftWidth <= 0) return truncateDisplay(rightText, maximum);
-  return `${padDisplay(truncateDisplay(left, leftWidth), leftWidth)}  ${rightText}`;
-}
-
-export function wrapDisplay(value: string, width: number): string[] {
-  const maximum = Math.max(1, width);
-  const result: string[] = [];
-  for (const sourceLine of cleanTerminalText(value).split("\n")) {
-    let remaining = sourceLine;
-    if (remaining === "") {
-      result.push("");
-      continue;
-    }
-    while (displayWidth(remaining) > maximum) {
-      const characters = [...remaining];
-      let consumed = 0;
-      let used = 0;
-      let lastWhitespace = -1;
-      for (let index = 0; index < characters.length; index++) {
-        const next = characterWidth(characters[index]!);
-        if (used + next > maximum) break;
-        used += next;
-        consumed = index + 1;
-        if (/\s/u.test(characters[index]!)) lastWhitespace = index;
-      }
-      if (lastWhitespace >= Math.floor(consumed / 2)) consumed = lastWhitespace + 1;
-      result.push(characters.slice(0, consumed).join("").trimEnd());
-      remaining = characters.slice(consumed).join("").trimStart();
-    }
-    result.push(remaining);
-  }
-  return result;
 }
 
 function normalizedKey(character: string, key: KeypressDescriptor): TerminalKey {

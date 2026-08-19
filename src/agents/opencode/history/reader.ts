@@ -1177,7 +1177,7 @@ export function readOpenCodeHistory(options: ReadOpenCodeHistoryOptions): ReadOp
         native: {
           carrier: {
             database: options.databaseRelativePath,
-            sidecars: [...(sidecars.owned.get(nativeId) ?? []), ...sidecars.unassigned],
+            sidecars: [...(sidecars.owned.get(nativeId) ?? [])],
             plan: options.planFiles?.get(nativeId) ?? null,
             toolOutputs: (options.toolOutputs?.get(nativeId) ?? []).map((item) => ({
               nativePath: item.nativePath,

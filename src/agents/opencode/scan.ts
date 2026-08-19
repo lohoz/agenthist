@@ -144,14 +144,8 @@ async function captureOpenCode(
     ...(options.importedLibrary === undefined ? {} : { importedLibrary: options.importedLibrary }),
   });
   const warnings = [...read.warnings, ...toolOutputs.warnings, ...toolOutputResources.warnings];
-  const assignedSidecars = sidecarFiles.length - read.unassignedSidecars.length;
-  if (assignedSidecars !== 0) {
-    warnings.push(
-      `captured ${assignedSidecars} OpenCode session_diff file(s) with canonical session ownership`,
-    );
-  }
   if (read.unassignedSidecars.length !== 0) warnings.push(
-    `captured ${read.unassignedSidecars.length} OpenCode session_diff file(s) with unknown ownership; all sessions remain blocked`,
+    `preserved ${read.unassignedSidecars.length} OpenCode session_diff file(s) without a matching session; excluded them from session migration`,
   );
   if (!plansBefore.supported) {
     warnings.push("OpenCode session plan ownership capability is unavailable; plan files were not captured");

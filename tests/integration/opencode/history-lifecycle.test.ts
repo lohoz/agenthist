@@ -282,6 +282,7 @@ test("OpenCode scan preserves readable multi-session history without copying con
     createSource(databasePath, sourceToolOutput, undefined, sourceBase);
     const sessionDiffRoot = path.join(dataRoot, "storage", "session_diff");
     const archivedSessionDiff = path.join(sessionDiffRoot, "ses_archived_beta.json");
+    const orphanedSessionDiff = path.join(sessionDiffRoot, "ses_removed_orphan.json");
     const archivedDiffContents = `${JSON.stringify([{
       file: "paper.md",
       patch: "@@ -1 +1 @@\\n-old\\n+new",
@@ -291,6 +292,7 @@ test("OpenCode scan preserves readable multi-session history without copying con
     }])}\n`;
     await mkdir(sessionDiffRoot, { recursive: true });
     await writeFile(archivedSessionDiff, archivedDiffContents, { mode: 0o600 });
+    await writeFile(orphanedSessionDiff, `${JSON.stringify([])}\n`, { mode: 0o600 });
     const runtime = { environment: { HOME: root }, cwd: root, home: root };
     const scanned = await runCli([
       "--json",
@@ -305,6 +307,12 @@ test("OpenCode scan preserves readable multi-session history without copying con
     assert.equal(scanData.agent.reusedSessions, 0);
     assert.equal(scanData.agent.rebuiltSessions, 3);
     assert.equal(scanData.agent.removedSessions, 0);
+    assert.equal(
+      scanData.warnings.includes(
+        "preserved 1 OpenCode session_diff file(s) without a matching session; excluded them from session migration",
+      ),
+      true,
+    );
 
     const rescanned = await runCli([
       "--json",
@@ -374,6 +382,13 @@ test("OpenCode scan preserves readable multi-session history without copying con
     };
     const capturedDatabase = path.join(
       state, "history", "opencode", "snapshots", head.snapshotId, "raw", "opencode", "history.sqlite",
+    );
+    assert.equal(
+      await readFile(path.join(
+        state, "history", "opencode", "snapshots", head.snapshotId,
+        "raw", "opencode", "session_diff", "ses_removed_orphan.json",
+      ), "utf8"),
+      `${JSON.stringify([])}\n`,
     );
     const evidence = new DatabaseSync(capturedDatabase, { readOnly: true });
     const capturedTables = evidence.prepare(

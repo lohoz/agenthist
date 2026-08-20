@@ -74,8 +74,10 @@ agenthist export -o backup.agenthist
 agenthist inspect backup.agenthist
 \`\`\`
 
-Export includes all scanned sessions by default. Repeat \`--agent\` or \`--session\` to select a
-subset. Existing output files are not overwritten.
+Bulk export includes every safely migratable scanned session by default and reports anything
+skipped. Repeat \`--agent\` to narrow the bulk selection. An explicit \`--session\` selection is
+strict and fails when a selected session cannot be exported. Existing output files are not
+overwritten.
 
 ## Import or convert
 

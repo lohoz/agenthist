@@ -31,7 +31,9 @@ test("skill install and uninstall manage only AgentHist-owned content", async ()
     const skillContents = await readFile(path.join(codexSkill, "SKILL.md"), "utf8");
     assert.match(skillContents, /^---\nname: agenthist\ndescription:/);
     assert.match(skillContents, /agenthist help <command>/);
-    await access(path.join(codexSkill, "references", "workflows.md"));
+    const workflows = await readFile(path.join(codexSkill, "references", "workflows.md"), "utf8");
+    assert.match(workflows, /every safely migratable scanned session/);
+    assert.match(workflows, /explicit `--session` selection is\s+strict/);
     await access(path.join(claudeSkill, "references", "semantics.md"));
     await access(path.join(piSkill, "references", "semantics.md"));
     await assert.rejects(access(openCodeSkill), (error: NodeJS.ErrnoException) => error.code === "ENOENT");

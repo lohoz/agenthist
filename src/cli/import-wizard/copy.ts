@@ -127,8 +127,10 @@ export interface ImportWizardCopy {
     readonly resolveAll: string;
     readonly mapTitle: string;
     readonly source: string;
-    readonly currentTarget: string;
-    readonly mapHelp: string;
+    readonly directoryCandidates: string;
+    readonly noDirectoryCandidates: string;
+    readonly completionHelp: string;
+    readonly invalidDirectory: string;
     readonly targetPrompt: string;
     sessionCount(count: number): string;
     readyCount(count: number): string;
@@ -301,8 +303,10 @@ const EN: ImportWizardCopy = {
     resolveAll: "Map every missing workspace to an existing directory before review.",
     mapTitle: "Map workspace",
     source: "Source",
-    currentTarget: "Current target",
-    mapHelp: "Enter an existing absolute directory. Leave empty to keep the current path.",
+    directoryCandidates: "Directory candidates",
+    noDirectoryCandidates: "No matching directories",
+    completionHelp: "Up/Down chooses · Enter fills choice / confirms path · Tab completes · Ctrl+U clears · Esc cancels",
+    invalidDirectory: "Enter or choose an existing absolute directory.",
     targetPrompt: "Target directory: ",
     sessionCount: (count) => `${count} session${count === 1 ? "" : "s"}`,
     readyCount: (count) => `${count} path${count === 1 ? "" : "s"} ready`,
@@ -489,8 +493,10 @@ const ZH: ImportWizardCopy = {
     resolveAll: "请将所有缺失的工作区映射到已有目录后再继续。",
     mapTitle: "映射工作区",
     source: "来源",
-    currentTarget: "当前目标",
-    mapHelp: "输入已有的绝对目录；留空则保留当前路径。",
+    directoryCandidates: "候选目录",
+    noDirectoryCandidates: "没有匹配的目录",
+    completionHelp: "上下键选择 · Enter 填入候选 / 确认路径 · Tab 补全 · Ctrl+U 清空 · Esc 取消",
+    invalidDirectory: "请输入或选择一个已有的绝对目录。",
     targetPrompt: "目标目录：",
     sessionCount: (count) => `${count} 个会话`,
     readyCount: (count) => `${count} 个路径可用`,

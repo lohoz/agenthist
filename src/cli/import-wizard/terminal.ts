@@ -32,6 +32,11 @@ interface TerminalOutput extends NodeJS.WritableStream {
   readonly rows?: number;
 }
 
+export interface TerminalCursor {
+  readonly line: number;
+  readonly column?: number;
+}
+
 export interface TerminalKey {
   readonly name: string;
   readonly text: string;
@@ -109,7 +114,7 @@ export class ImportTerminal {
     this.previousLines = [];
   }
 
-  draw(lines: readonly string[], cursor = false): void {
+  draw(lines: readonly string[], cursor: boolean | TerminalCursor = false): void {
     const visible = lines.slice(0, this.height).map(sanitizeHumanOutput);
     let output = "\u001b[?25l";
     if (this.previousLines.length === 0) {
@@ -123,9 +128,14 @@ export class ImportTerminal {
       }
     }
     this.previousLines = [...visible];
-    if (cursor) {
-      const row = Math.max(1, visible.length);
-      const column = Math.max(1, Math.min(this.width, displayWidth(visible.at(-1) ?? "") + 1));
+    if (cursor !== false) {
+      const cursorLine = typeof cursor === "boolean" ? visible.length - 1 : cursor.line;
+      const row = Math.max(1, Math.min(visible.length, cursorLine + 1));
+      const requestedColumn = typeof cursor === "boolean" ? undefined : cursor.column;
+      const column = Math.max(1, Math.min(
+        this.width,
+        requestedColumn ?? displayWidth(visible[row - 1] ?? "") + 1,
+      ));
       output += `\u001b[${row};${column}H\u001b[?25h`;
     }
     this.output.write(output);

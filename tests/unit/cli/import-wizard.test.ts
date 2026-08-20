@@ -15,6 +15,7 @@ import {
   type ImportWizardRequest,
 } from "../../../src/cli/import-wizard/index.js";
 import { detectImportWizardLanguage } from "../../../src/cli/import-wizard/copy.js";
+import { resolveDirectoryInput } from "../../../src/cli/import-wizard/directory-input.js";
 import { cleanTerminalText, columns, displayWidth } from "../../../src/cli/import-wizard/terminal.js";
 
 const ENTRY: ImportCatalogEntry = {
@@ -139,7 +140,7 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     { cue: "Choose Codex provider", keys: "\u001b[B\r" },
     { cue: "Choose target Agents", keys: "\r" },
     { cue: "Workspace paths", keys: "e" },
-    { cue: "Target directory: ", keys: `${targetWorkspace}\r` },
+    { cue: "Target directory: ", keys: `${root}\t\u001b[B\r\r` },
     { cue: "Workspace paths", keys: "\u001b[B\u001b[A\r" },
     { cue: "Review import", keys: "\r" },
     { cue: "Confirm import", keys: "\r" },
@@ -259,6 +260,10 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     assert.match(rendered, /legacy-provider.*4 existing sessions/);
     assert.match(rendered, /Codex convert/);
     assert.match(rendered, /MISSING/);
+    assert.match(rendered, /Directory candidates/);
+    assert.match(rendered, /Target directory:.*Directory candidates.*Up\/Down chooses/s);
+    assert.ok(rendered.includes(`Target directory: ${targetWorkspace}`));
+    assert.doesNotMatch(rendered, /Current target/);
     assert.match(rendered, /MAPPED/);
     assert.match(rendered, /1 path ready/);
     assert.match(rendered, /MAPPED · 1 session/);
@@ -289,7 +294,7 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     assert.doesNotMatch(rendered, /\[o\]/);
     assert.doesNotMatch(rendered, /Target storage/);
     assert.doesNotMatch(rendered, /Commands: <n>/);
-    assert.doesNotMatch(rendered, /Tab/);
+    assert.doesNotMatch(rendered, /\[Tab\]/);
     assert.equal(rendered.match(/Checking\.\.\./g)?.length ?? 0, 1);
     assert.equal(rawRendered.match(/\u001b\[2J/g)?.length ?? 0, 1);
   } finally {
@@ -297,6 +302,12 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     output.destroy();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("workspace mapping input accepts only native absolute paths", () => {
+  assert.equal(resolveDirectoryInput("relative/workspace"), undefined);
+  assert.equal(resolveDirectoryInput(`.${path.sep}workspace`), undefined);
+  assert.equal(resolveDirectoryInput(process.cwd()), path.normalize(process.cwd()));
 });
 
 test("interactive import language detection follows the terminal locale", () => {

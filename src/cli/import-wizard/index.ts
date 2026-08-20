@@ -23,6 +23,11 @@ import {
   type ImportWizardLanguage,
 } from "./copy.js";
 import {
+  readDirectoryInput,
+  type DirectoryInputFrame,
+  type DirectoryInputView,
+} from "./directory-input.js";
+import {
   cleanTerminalText,
   columns,
   displayWidth,
@@ -1545,6 +1550,52 @@ function renderWorkspace(
   ];
 }
 
+function mappingTargets(mappings: readonly string[]): readonly string[] {
+  return mappings.flatMap((mapping) => {
+    const separator = mapping.indexOf("=");
+    return separator < 0 ? [] : [mapping.slice(separator + 1)];
+  });
+}
+
+function workspaceMappingPromptFrame(
+  terminal: ImportTerminal,
+  color: boolean,
+  copy: ImportWizardCopy,
+  workspace: ImportWorkspaceInspection,
+  view: DirectoryInputView,
+): DirectoryInputFrame {
+  const width = terminal.width;
+  const feedback = view.invalid ? copy.workspaces.invalidDirectory : copy.workspaces.completionHelp;
+  const feedbackLines = wrapDisplay(feedback, width);
+  const candidateLimit = Math.max(1, terminal.height - 9 - feedbackLines.length);
+  const candidateView = windowAround(view.candidates, view.activeCandidate, candidateLimit);
+  const candidates = view.candidates.length === 0
+    ? [paint(`  ${copy.workspaces.noDirectoryCandidates}`, "muted", color)]
+    : candidateView.items.map((candidate, index) => {
+      const active = view.candidateSelected && candidateView.start + index === view.activeCandidate;
+      const line = `${active ? ">" : " "} ${
+        truncatePathStart(candidate, Math.max(1, width - 2))
+      }`;
+      return active ? paint(line, "focus", color) : line;
+    });
+  const promptWidth = displayWidth(copy.workspaces.targetPrompt);
+  const shown = truncatePathStart(view.value, Math.max(8, width - promptWidth));
+  const lines = [
+    paint(copy.brand, "brand", color),
+    progressLine(2, width, color, copy),
+    "",
+    paint(truncateDisplay(copy.workspaces.mapTitle, width), "heading", color),
+    truncatePathStart(`${copy.workspaces.source}: ${workspace.source}`, width),
+    "",
+    `${copy.workspaces.targetPrompt}${shown}`,
+    "",
+    paint(copy.workspaces.directoryCandidates, "section", color),
+    ...candidates,
+    ...feedbackLines.map((line) => paint(line, view.invalid ? "warning" : "muted", color)),
+  ];
+  return { lines, cursorLine: 6 };
+}
+
 async function mapWorkspacesScreen(
   terminal: ImportTerminal,
   options: ImportWizardOptions,
@@ -1629,20 +1680,12 @@ async function mapWorkspacesScreen(
       continue;
     }
     if (key.name === "e") {
-      const value = await terminal.line((input) => promptFrame(
-        terminal,
-        color,
-        2,
-        copy.workspaces.mapTitle,
-        [
-          `${copy.workspaces.source}: ${workspace.source}`,
-          `${copy.workspaces.currentTarget}: ${workspace.target}`,
-          copy.workspaces.mapHelp,
-        ],
-        copy.workspaces.targetPrompt,
-        input,
-      ));
-      if (value !== undefined && value !== "") {
+      const value = await readDirectoryInput(terminal, {
+        ...(workspace.status === "mapped" ? { initial: workspace.target } : {}),
+        seeds: mappingTargets(state.pathMappings),
+        render: (view) => workspaceMappingPromptFrame(terminal, color, copy, workspace, view),
+      });
+      if (value !== undefined) {
         replaceMapping(state.pathMappings, workspace.source, value);
         workspaces = await inspect();
       }

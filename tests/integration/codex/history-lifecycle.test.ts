@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { parseCodexRollout } from "../../../src/agents/codex/history/rollout.js";
+import { codexSessionRef } from "../../../src/agents/codex/identity.js";
 import { runCli, type CliRuntime } from "../../../src/cli/program.js";
 import { readScanResult } from "../../support/scan-result.js";
 
@@ -491,6 +492,34 @@ test("Codex scan remains listable, searchable, and readable after the native sou
       [addedMetrics.agent.reusedSessions, addedMetrics.agent.rebuiltSessions, addedMetrics.agent.removedSessions],
       [3, 1, 0],
     );
+
+    const incompleteReference = codexSessionRef(incrementalId);
+    const mixedArchive = path.join(root, "codex-mixed.agenthist");
+    const mixedExport = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "codex", "-o", mixedArchive,
+    ], runtime);
+    assert.equal(mixedExport.exitCode, 0, mixedExport.stderr);
+    const mixedData = (JSON.parse(mixedExport.stdout) as {
+      data: {
+        entries: number;
+        skipped_sessions: Array<{ session_ref: string; reason: string }>;
+      };
+    }).data;
+    assert.equal(mixedData.entries, 3);
+    assert.deepEqual(mixedData.skipped_sessions.map((session) => session.session_ref), [incompleteReference]);
+    assert.match(mixedData.skipped_sessions[0]!.reason, /no restorable thread row/);
+    const mixedInspect = await runCli(["--json", "inspect", mixedArchive], runtime);
+    assert.equal(mixedInspect.exitCode, 0, mixedInspect.stderr);
+    assert.equal((JSON.parse(mixedInspect.stdout) as {
+      data: { entries: Array<{ session_ref: string }> };
+    }).data.entries.some((entry) => entry.session_ref === incompleteReference), false);
+    const incompleteExport = await runCli([
+      "--json", "--state-dir", state, "export", "--session", incompleteReference,
+      "-o", path.join(root, "codex-incomplete.agenthist"),
+    ], runtime);
+    assert.equal(incompleteExport.exitCode, 3);
+    assert.match((JSON.parse(incompleteExport.stdout) as { error: { message: string } }).error.message,
+      /no restorable thread row/);
 
     await writeFile(incrementalPath, rollout(
       incrementalId,

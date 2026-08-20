@@ -10,7 +10,7 @@ agenthist export [--agent <codex|claude|opencode|pi>]...
                  [-o|--output <file.agenthist>]
 ```
 
-Every session is exported by default. Repeat or combine `--agent` and `--session` to narrow the selection.
+Bulk export includes every safely migratable session and clearly lists anything skipped. Repeat `--agent` to narrow the bulk selection. An explicit `--session` selection is strict and fails if that session cannot be exported.
 
 ```bash
 agenthist export -o backup.agenthist

@@ -10,7 +10,7 @@ No. They change only the display state in AgentHist. Use `unarchive` or `undelet
 
 ## How many sessions do export and import select by default?
 
-All sessions. Use `--agent` and `--session` to narrow the selection.
+Export considers all sessions, skips any that cannot be migrated safely, and reports them. An explicit `--session` selection remains strict. Import selects every session contained in the archive.
 
 Interactive import shows the complete selection before writing, so you can deselect sessions first.
 

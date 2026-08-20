@@ -366,3 +366,97 @@ test("Pi history scans, closes parent exports, and restores transactionally with
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Pi bulk export skips an external-parent session but still fails on a missing snapshot file", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-pi-export-preflight-"));
+  try {
+    const sourceRoot = path.join(root, "source-sessions");
+    const safeCarrier = path.join(sourceRoot, piWorkspaceCarrier(PARENT_CWD));
+    const blockedCarrier = path.join(sourceRoot, piWorkspaceCarrier(CHILD_CWD));
+    const state = path.join(root, "state");
+    const safeFile = path.join(safeCarrier, `2026-08-16T05-00-00-000Z_${PARENT_ID}.jsonl`);
+    const blockedFile = path.join(blockedCarrier, `2026-08-16T06-00-00-000Z_${CHILD_ID}.jsonl`);
+    await mkdir(safeCarrier, { recursive: true });
+    await mkdir(blockedCarrier, { recursive: true });
+    await writeFile(safeFile, sessionBytes({
+      id: PARENT_ID,
+      cwd: PARENT_CWD,
+      title: "Pi safe export session",
+      user: "Pi safe export marker",
+      answer: "Safe export answer",
+      timestamp: "2026-08-16T05:00:00.000Z",
+    }), { mode: 0o600 });
+    await writeFile(blockedFile, sessionBytes({
+      id: CHILD_ID,
+      cwd: CHILD_CWD,
+      title: "Pi external parent session",
+      user: "Pi external parent marker",
+      answer: "External parent answer",
+      timestamp: "2026-08-16T06:00:00.000Z",
+      parentSession: path.join(root, "missing-parent.jsonl"),
+    }), { mode: 0o600 });
+    const runtime = { environment: { HOME: root }, cwd: root, home: root };
+    const scanned = await runCli([
+      "--json", "--state-dir", state, "--pi-session-dir", sourceRoot,
+      "scan", "--agent", "pi",
+    ], runtime);
+    assert.equal(scanned.exitCode, 0, scanned.stderr);
+
+    const listed = await runCli([
+      "--json", "--state-dir", state, "history", "list", "--agent", "pi", "--view", "all",
+    ], runtime);
+    assert.equal(listed.exitCode, 0, listed.stderr);
+    const sessions = (JSON.parse(listed.stdout) as {
+      data: { sessions: Array<{ session_ref: string; title: string }> };
+    }).data.sessions;
+    const safeReference = sessions.find((session) => session.title === "Pi safe export session")!.session_ref;
+    const blockedReference = sessions.find((session) => session.title === "Pi external parent session")!.session_ref;
+
+    const strictExport = await runCli([
+      "--json", "--state-dir", state, "export", "--session", blockedReference,
+      "-o", path.join(root, "pi-blocked.agenthist"),
+    ], runtime);
+    assert.equal(strictExport.exitCode, 3);
+    assert.match((JSON.parse(strictExport.stdout) as { error: { message: string } }).error.message,
+      /cannot be exported without losing native history/);
+
+    const archive = path.join(root, "pi-mixed.agenthist");
+    const mixedExport = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "pi", "-o", archive,
+    ], runtime);
+    assert.equal(mixedExport.exitCode, 0, mixedExport.stderr);
+    const mixedData = (JSON.parse(mixedExport.stdout) as {
+      data: {
+        entries: number;
+        skipped_sessions: Array<{ session_ref: string; reason: string }>;
+      };
+    }).data;
+    assert.equal(mixedData.entries, 1);
+    assert.deepEqual(mixedData.skipped_sessions.map((session) => session.session_ref), [blockedReference]);
+    assert.match(mixedData.skipped_sessions[0]!.reason, /cannot be exported without losing native history/);
+    const inspected = await runCli(["--json", "inspect", archive], runtime);
+    assert.equal(inspected.exitCode, 0, inspected.stderr);
+    assert.deepEqual((JSON.parse(inspected.stdout) as {
+      data: { entries: Array<{ session_ref: string }> };
+    }).data.entries.map((entry) => entry.session_ref), [safeReference]);
+
+    const head = JSON.parse(await readFile(path.join(state, "history", "pi", "head.json"), "utf8")) as {
+      snapshotId: string;
+    };
+    const indexPath = path.join(state, "history", "pi", "snapshots", head.snapshotId, "index.json");
+    const snapshot = JSON.parse(await readFile(indexPath, "utf8")) as {
+      sessions: Array<{ sessionRef: string; rawFiles: string[] }>;
+    };
+    const safeRaw = snapshot.sessions.find((session) => session.sessionRef === safeReference)!.rawFiles[0]!;
+    await rm(path.join(path.dirname(indexPath), "raw", ...safeRaw.split("/")));
+    const brokenExport = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "pi",
+      "-o", path.join(root, "pi-broken.agenthist"),
+    ], runtime);
+    assert.equal(brokenExport.exitCode, 3);
+    assert.match((JSON.parse(brokenExport.stdout) as { error: { message: string } }).error.message,
+      /ENOENT|no such file/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

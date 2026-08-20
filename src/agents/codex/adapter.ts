@@ -13,6 +13,7 @@ import { requirePortableSession } from "../portable-support.js";
 import { discoverCodexRollouts, requireRealDirectory } from "./carrier.js";
 import {
   prepareCodexArchive,
+  closeCodexSelection,
   closeCodexEntrySelection,
   validateCodexArchiveEntries,
   validateCodexArchiveObjects,
@@ -104,6 +105,7 @@ export const codexAdapter = {
     },
   },
   archive: {
+    closeExportSelection: closeCodexSelection,
     async prepare(options) {
       return prepareCodexArchive(
         options.stateDirectory,

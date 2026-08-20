@@ -61,6 +61,12 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
   assert.equal(inspectHelp.exitCode, 0);
   assert.match(inspectHelp.stdout, /workspace summary lists every source path/i);
 
+  const exportHelp = await runCli(["help", "export"]);
+  assert.equal(exportHelp.exitCode, 0);
+  assert.match(exportHelp.stdout, /every safely\s+migratable session/i);
+  assert.match(exportHelp.stdout, /reports anything skipped/i);
+  assert.match(exportHelp.stdout, /explicit --session selection is strict/i);
+
   const historyHelp = await runCli(["history", "list", "--help"]);
   assert.equal(historyHelp.exitCode, 0);
   assert.match(historyHelp.stdout, /overlay/);

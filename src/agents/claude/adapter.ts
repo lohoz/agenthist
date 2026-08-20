@@ -13,6 +13,7 @@ import { failedSourceInspection } from "../source-support.js";
 import { requirePortableSession } from "../portable-support.js";
 import { discoverClaudeCarriers } from "./carrier.js";
 import {
+  closeClaudeSelection,
   prepareClaudeArchive,
   validateClaudeArchiveEntries,
   validateClaudeArchiveObjects,
@@ -96,6 +97,7 @@ export const claudeAdapter = {
     },
   },
   archive: {
+    closeExportSelection: closeClaudeSelection,
     async prepare(options): Promise<PreparedAgentArchive> {
       const sources: ArchiveObjectSource[] = [];
       const bindings = new Map<string, readonly ArchiveObjectBinding[]>();

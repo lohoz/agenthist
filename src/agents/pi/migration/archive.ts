@@ -80,8 +80,16 @@ export function readPiNativeDescriptor(value: Pick<StoredSession, "native"> | Pi
   };
 }
 
-function closePiSessions(all: readonly StoredSession[], selected: readonly StoredSession[]): StoredSession[] {
-  const byReference = new Map(all.filter((session) => session.agent === "pi").map((session) => [session.sessionRef, session]));
+export function closePiSelection(
+  snapshot: AgentSnapshot,
+  selected: readonly StoredSession[],
+): StoredSession[] {
+  if (snapshot.agent !== "pi" || selected.some((session) => session.agent !== "pi")) {
+    throw new Error("Pi selection received another Agent");
+  }
+  const byReference = new Map(snapshot.sessions
+    .filter((session) => session.agent === "pi")
+    .map((session) => [session.sessionRef, session]));
   const included = new Set(selected.map((session) => session.sessionRef));
   const visiting = new Set<string>();
   const close = (sessionRef: string): void => {
@@ -93,6 +101,9 @@ function closePiSessions(all: readonly StoredSession[], selected: readonly Store
     if (descriptor.migrationBlockers.length !== 0) {
       throw new Error(`Pi session cannot be exported without losing native history: ${sessionRef}`);
     }
+    if (session.rawFiles.length !== 1 || session.rawFiles[0] !== descriptor.relativePath) {
+      throw new Error(`Pi session cannot be exported without losing native history: ${sessionRef}`);
+    }
     if (descriptor.parentSessionRef !== null && !included.has(descriptor.parentSessionRef)) {
       included.add(descriptor.parentSessionRef);
       close(descriptor.parentSessionRef);
@@ -100,7 +111,7 @@ function closePiSessions(all: readonly StoredSession[], selected: readonly Store
     visiting.delete(sessionRef);
   };
   for (const sessionRef of [...included]) close(sessionRef);
-  return all.filter((session) => session.agent === "pi" && included.has(session.sessionRef))
+  return snapshot.sessions.filter((session) => session.agent === "pi" && included.has(session.sessionRef))
     .sort((left, right) => left.sessionRef.localeCompare(right.sessionRef));
 }
 
@@ -145,14 +156,11 @@ export function preparePiArchive(
   if (snapshot.agent !== "pi" || selected.some((session) => session.agent !== "pi")) {
     throw new Error("Pi archive received another Agent");
   }
-  const sessions = closePiSessions(snapshot.sessions, selected);
+  const sessions = closePiSelection(snapshot, selected);
   const sources: ArchiveObjectSource[] = [];
   const bindings = new Map<string, readonly ArchiveObjectBinding[]>();
   for (const session of sessions) {
     const descriptor = readPiNativeDescriptor(session);
-    if (session.rawFiles.length !== 1 || session.rawFiles[0] !== descriptor.relativePath) {
-      throw new Error(`Pi session cannot be exported without losing native history: ${session.sessionRef}`);
-    }
     const id = allocateObjectId();
     sources.push({
       id,

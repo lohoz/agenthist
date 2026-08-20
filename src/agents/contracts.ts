@@ -74,6 +74,10 @@ export interface PrepareAgentArchiveOptions {
 }
 
 export interface AgentArchiveCapability {
+  closeExportSelection(
+    snapshot: AgentSnapshot,
+    selected: readonly StoredSession[],
+  ): readonly StoredSession[];
   prepare(options: PrepareAgentArchiveOptions): Promise<PreparedAgentArchive>;
   validateEntries(
     entries: readonly ArchiveEntry[],

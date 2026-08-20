@@ -181,13 +181,13 @@ export interface PreparedClaudeArchive {
   readonly bindings: readonly ArchiveObjectBinding[];
 }
 
-export function prepareClaudeArchive(
-  stateDirectory: string,
+function requireExportableClaudeSession(
   snapshot: AgentSnapshot,
   session: StoredSession,
-  allocateObjectId: () => string,
-): PreparedClaudeArchive {
-  if (snapshot.agent !== "claude" || session.agent !== "claude") throw new Error("Claude archive received another Agent");
+): { readonly native: ClaudeDescriptor; readonly related: readonly ClaudeRelatedFileDescriptor[] } {
+  if (snapshot.agent !== "claude" || session.agent !== "claude") {
+    throw new Error("Claude archive received another Agent");
+  }
   const native = readClaudeDescriptor(session);
   validateMainPath(native.mainRelativePath, native.projectCarrier, session.nativeId);
   if (native.blockers.length !== 0) {
@@ -201,6 +201,24 @@ export function prepareClaudeArchive(
   if (JSON.stringify([...session.rawFiles].sort()) !== JSON.stringify(expectedRawFiles)) {
     throw new Error(`Claude Code session cannot be exported without losing native history: ${session.sessionRef}`);
   }
+  return { native, related };
+}
+
+export function closeClaudeSelection(
+  snapshot: AgentSnapshot,
+  selected: readonly StoredSession[],
+): StoredSession[] {
+  for (const session of selected) requireExportableClaudeSession(snapshot, session);
+  return [...selected].sort((left, right) => left.sessionRef.localeCompare(right.sessionRef));
+}
+
+export function prepareClaudeArchive(
+  stateDirectory: string,
+  snapshot: AgentSnapshot,
+  session: StoredSession,
+  allocateObjectId: () => string,
+): PreparedClaudeArchive {
+  const { native, related } = requireExportableClaudeSession(snapshot, session);
   const sources: ArchiveObjectSource[] = [];
   const bindings: ArchiveObjectBinding[] = [];
   for (const file of [

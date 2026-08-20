@@ -84,9 +84,10 @@ function nativeDescriptor(session: Pick<StoredSession, "agent" | "native" | "ses
 }
 
 function assertOpenCodeSessionMigratable(
+  session: Pick<StoredSession, "nativeId" | "sessionRef">,
   descriptor: ReturnType<typeof nativeDescriptor>,
-  sessionRef: string,
 ): void {
+  const sessionRef = session.sessionRef;
   if (descriptor.relationStatus !== "valid") {
     throw new Error(`OpenCode session relation closure is invalid: ${sessionRef}`);
   }
@@ -101,6 +102,44 @@ function assertOpenCodeSessionMigratable(
   }
   if (descriptor.revertStatus === "unknown") {
     throw new Error(`OpenCode session revert state cannot be classified: ${sessionRef}`);
+  }
+  const expectedSidecar = `opencode/session_diff/${session.nativeId}.json`;
+  if (descriptor.sidecars.some((sidecar) => sidecar !== expectedSidecar) || descriptor.sidecars.length > 1) {
+    throw new Error(`OpenCode session_diff ownership is not portable: ${sessionRef}`);
+  }
+  const expectedPlan = `opencode/plan/${session.nativeId}.md`;
+  if (descriptor.plan !== null && descriptor.plan !== expectedPlan) {
+    throw new Error(`OpenCode session plan ownership is not portable: ${sessionRef}`);
+  }
+  if (
+    new Set(descriptor.toolOutputs.map((item) => item.nativePath)).size !== descriptor.toolOutputs.length ||
+    new Set(descriptor.toolOutputs.map((item) => item.relativePath)).size !== descriptor.toolOutputs.length
+  ) {
+    throw new Error(`OpenCode tool-output ownership is ambiguous within the session: ${sessionRef}`);
+  }
+}
+
+function assertOpenCodeSelectionMigratable(
+  sessions: readonly Pick<StoredSession, "agent" | "native" | "nativeId" | "sessionRef">[],
+): void {
+  const nativeOwners = new Map<string, string>();
+  const availablePathOwners = new Map<string, string>();
+  for (const session of sessions) {
+    const descriptor = nativeDescriptor(session);
+    assertOpenCodeSessionMigratable(session, descriptor);
+    for (const output of descriptor.toolOutputs) {
+      const nativeOwner = nativeOwners.get(output.nativePath);
+      if (nativeOwner !== undefined && nativeOwner !== session.sessionRef) {
+        throw new Error(`OpenCode tool-output ownership is ambiguous (${output.relativePath}): ${session.sessionRef}`);
+      }
+      nativeOwners.set(output.nativePath, session.sessionRef);
+      if (!output.available) continue;
+      const pathOwner = availablePathOwners.get(output.relativePath);
+      if (pathOwner !== undefined && pathOwner !== session.sessionRef) {
+        throw new Error(`OpenCode tool-output archive path is ambiguous (${output.relativePath}): ${session.sessionRef}`);
+      }
+      availablePathOwners.set(output.relativePath, session.sessionRef);
+    }
   }
 }
 
@@ -119,7 +158,7 @@ export function closeOpenCodeEntrySelection(
   for (const entry of all) {
     if (entry.agent !== "opencode" || !selected.has(entry.sessionRef)) continue;
     const descriptor = nativeDescriptor(entry);
-    assertOpenCodeSessionMigratable(descriptor, entry.sessionRef);
+    assertOpenCodeSessionMigratable(entry, descriptor);
     for (const nativeId of descriptor.component) {
       const member = byNativeId.get(nativeId);
       if (member === undefined) throw new Error(`OpenCode archive session component is incomplete: ${entry.sessionRef}`);
@@ -128,9 +167,12 @@ export function closeOpenCodeEntrySelection(
   }
   for (const entry of all) {
     if (entry.agent === "opencode" && result.has(entry.sessionRef)) {
-      assertOpenCodeSessionMigratable(nativeDescriptor(entry), entry.sessionRef);
+      assertOpenCodeSessionMigratable(entry, nativeDescriptor(entry));
     }
   }
+  assertOpenCodeSelectionMigratable(all.filter((entry) =>
+    entry.agent === "opencode" && result.has(entry.sessionRef)
+  ));
   return result;
 }
 
@@ -143,7 +185,7 @@ export function closeOpenCodeSelection(
   const included = new Set<string>();
   for (const session of selected) {
     const descriptor = nativeDescriptor(session);
-    assertOpenCodeSessionMigratable(descriptor, session.sessionRef);
+    assertOpenCodeSessionMigratable(session, descriptor);
     for (const nativeId of descriptor.component) {
       if (!byNativeId.has(nativeId)) throw new Error(`OpenCode session component is incomplete: ${session.sessionRef}`);
       included.add(nativeId);
@@ -152,7 +194,7 @@ export function closeOpenCodeSelection(
   const sessions = snapshot.sessions
     .filter((session) => included.has(session.nativeId))
     .sort((left, right) => left.sessionRef.localeCompare(right.sessionRef));
-  for (const session of sessions) assertOpenCodeSessionMigratable(nativeDescriptor(session), session.sessionRef);
+  assertOpenCodeSelectionMigratable(sessions);
   return sessions;
 }
 
@@ -186,14 +228,10 @@ export function prepareOpenCodeArchive(
     filePath: filteredDatabase,
   }];
   const toolOutputObjects = new Map<string, string>();
-  const toolOutputOwners = new Map<string, string>();
   const bindings = new Map<string, readonly ArchiveObjectBinding[]>();
   for (const session of sessions) {
     const descriptor = nativeDescriptor(session);
     const expectedSidecar = `opencode/session_diff/${session.nativeId}.json`;
-    if (descriptor.sidecars.some((sidecar) => sidecar !== expectedSidecar) || descriptor.sidecars.length > 1) {
-      throw new Error(`OpenCode session_diff ownership is not portable: ${session.sessionRef}`);
-    }
     const sessionBindings: ArchiveObjectBinding[] = [databaseBinding];
     if (descriptor.sidecars.length === 1) {
       const sidecarId = allocateObjectId();
@@ -206,9 +244,6 @@ export function prepareOpenCodeArchive(
     }
     const expectedPlan = `opencode/plan/${session.nativeId}.md`;
     if (descriptor.plan !== null) {
-      if (descriptor.plan !== expectedPlan) {
-        throw new Error(`OpenCode session plan ownership is not portable: ${session.sessionRef}`);
-      }
       const planId = allocateObjectId();
       sources.push({
         id: planId,
@@ -218,11 +253,6 @@ export function prepareOpenCodeArchive(
       sessionBindings.push({ id: planId, role: "session-plan", relativePath: expectedPlan });
     }
     for (const toolOutput of descriptor.toolOutputs) {
-      const owner = toolOutputOwners.get(toolOutput.nativePath);
-      if (owner !== undefined && owner !== session.sessionRef) {
-        throw new Error(`OpenCode tool-output ownership is ambiguous: ${toolOutput.relativePath}`);
-      }
-      toolOutputOwners.set(toolOutput.nativePath, session.sessionRef);
       if (!toolOutput.available) continue;
       let outputId = toolOutputObjects.get(toolOutput.relativePath);
       if (outputId === undefined) {
@@ -278,7 +308,7 @@ export function validateOpenCodeArchiveEntries(
     const expectedToolOutputs = new Map(
       descriptor.toolOutputs.filter((item) => item.available).map((item) => [item.relativePath, item]),
     );
-    assertOpenCodeSessionMigratable(descriptor, entry.sessionRef);
+    assertOpenCodeSessionMigratable(entry, descriptor);
     if (
       entry.agent !== "opencode" || openCodeSessionRef(entry.nativeId) !== entry.sessionRef ||
       unknown || sidecars.length > 1 || plans.length > 1 || toolOutputs.length !== expectedToolOutputs.size ||

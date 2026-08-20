@@ -17,6 +17,7 @@ import { requirePortableSession } from "../portable-support.js";
 import { backupSQLiteDatabase } from "../../infrastructure/sqlite.js";
 import {
   prepareOpenCodeArchive,
+  closeOpenCodeSelection,
   closeOpenCodeEntrySelection,
   readOpenCodeNativeDescriptor,
   validateOpenCodeArchiveEntries,
@@ -199,6 +200,7 @@ export const openCodeAdapter = {
     },
   },
   archive: {
+    closeExportSelection: closeOpenCodeSelection,
     async prepare(options) {
       return prepareOpenCodeArchive(
         options.stateDirectory,

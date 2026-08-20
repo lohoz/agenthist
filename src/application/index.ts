@@ -104,6 +104,7 @@ export type {
   ExportHistoryPlanItem,
   ExportHistoryOptions,
   ExportHistoryResult,
+  ExportSkippedSession,
   InspectArchiveOptions,
   InspectArchiveResult,
   InspectedArchiveWorkspace,

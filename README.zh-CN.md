@@ -103,12 +103,14 @@ agenthist scan
 agenthist export -o backup.agenthist
 ```
 
-`export` 默认包含全部会话。只迁移部分内容时，可以按 Agent 或 `session-ref` 筛选：
+`export` 默认包含所有可安全迁移的会话，并明确列出跳过的内容。只迁移部分内容时，可以按 Agent 或 `session-ref` 筛选：
 
 ```bash
 agenthist export --agent codex -o codex.agenthist
 agenthist export --session <session-ref> -o selected.agenthist
 ```
+
+显式指定 `--session` 时会采用严格模式；该会话无法导出就会直接报错，不会静默跳过。
 
 把文件复制到目标机器后运行：
 

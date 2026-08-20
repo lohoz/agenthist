@@ -18,6 +18,7 @@ import {
   type PiPortableProjection,
 } from "./conversion/portable-projector.js";
 import {
+  closePiSelection,
   closePiEntrySelection,
   preparePiArchive,
   validatePiArchiveEntries,
@@ -94,6 +95,7 @@ export const piAdapter = {
     },
   },
   archive: {
+    closeExportSelection: closePiSelection,
     async prepare(options) {
       return preparePiArchive(
         options.stateDirectory,

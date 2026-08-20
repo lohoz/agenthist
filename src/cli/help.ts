@@ -6,7 +6,7 @@ const commands = [
   ["history", "List, search, show, and organize captured history"],
   ["experience", "Extract recurring experience from captured history"],
   ["skill", "Install or remove AgentHist usage guidance"],
-  ["export", "Export captured history; defaults to every session"],
+  ["export", "Export captured history and report skipped sessions"],
   ["inspect", "Inspect an .agenthist file without importing it"],
   ["import", "Restore or convert history from an .agenthist file"],
   ["codex", "Manage Codex-specific history, including provider rebinding"],
@@ -78,8 +78,10 @@ same skill name is preserved.
   export: `Usage:
   agenthist export [--agent <agent>]... [--session <session-ref>]... [-o <file.agenthist>]
 
-Export a portable .agenthist file from scanned history. The default is every session;
---agent and --session are optional filters. Existing output files are never overwritten.
+Export a portable .agenthist file from scanned history. Bulk export includes every safely
+migratable session and reports anything skipped. --agent is an optional bulk filter.
+An explicit --session selection is strict and fails if that session cannot be exported.
+Existing output files are never overwritten.
 `,
   inspect: `Usage:
   agenthist inspect <file.agenthist> [--agent <agent>]... [--session <session-ref>]...

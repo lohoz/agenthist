@@ -103,12 +103,14 @@ agenthist scan
 agenthist export -o backup.agenthist
 ```
 
-`export` includes every session by default. Filter by Agent or `session-ref` when you only need part of the history:
+`export` includes every safely migratable session by default and reports anything skipped. Filter by Agent or `session-ref` when you only need part of the history:
 
 ```bash
 agenthist export --agent codex -o codex.agenthist
 agenthist export --session <session-ref> -o selected.agenthist
 ```
+
+An explicit `--session` selection is strict: the export fails instead of silently omitting that session.
 
 After moving the file to the target machine, run:
 

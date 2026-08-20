@@ -38,6 +38,14 @@ export interface ArchiveArtifactResult {
 
 export interface ExportHistoryResult extends ArchiveArtifactResult {
   readonly agents: readonly { readonly agent: Agent; readonly sessions: number }[];
+  readonly skippedSessions: readonly ExportSkippedSession[];
+}
+
+export interface ExportSkippedSession {
+  readonly agent: Agent;
+  readonly sessionRef: string;
+  readonly title: string;
+  readonly reason: string;
 }
 
 export interface ExportHistoryPlanItem {
@@ -53,6 +61,7 @@ export interface ExportHistoryPlan {
   readonly resources: number;
   readonly agents: readonly { readonly agent: Agent; readonly sessions: number }[];
   readonly items: readonly ExportHistoryPlanItem[];
+  readonly skippedSessions: readonly ExportSkippedSession[];
 }
 
 export interface InspectedHistoryEntry {
@@ -159,13 +168,17 @@ export function archiveArtifactResult(result: ArchiveWriteResult): ArchiveArtifa
   };
 }
 
-function exportResult(result: ArchiveWriteResult): ExportHistoryResult {
+function exportResult(
+  result: ArchiveWriteResult,
+  skippedSessions: readonly ExportSkippedSession[],
+): ExportHistoryResult {
   return {
     ...archiveArtifactResult(result),
     agents: AGENTS.flatMap((agent) => {
       const sessions = result.manifest.entries.filter((entry) => entry.agent === agent).length;
       return sessions === 0 ? [] : [{ agent, sessions }];
     }),
+    skippedSessions,
   };
 }
 
@@ -173,6 +186,7 @@ interface PreparedExport {
   readonly output: string;
   readonly sources: readonly ArchiveObjectSource[];
   readonly entries: readonly ArchiveEntry[];
+  readonly skippedSessions: readonly ExportSkippedSession[];
 }
 
 function exportAgentCounts(entries: readonly ArchiveEntry[]): ExportHistoryPlan["agents"] {
@@ -180,6 +194,74 @@ function exportAgentCounts(entries: readonly ArchiveEntry[]): ExportHistoryPlan[
     const sessions = entries.filter((entry) => entry.agent === agent).length;
     return sessions === 0 ? [] : [{ agent, sessions }];
   });
+}
+
+function exportFailureReason(error: unknown, sessionRef: string): string {
+  const message = error instanceof Error ? error.message : "unknown export error";
+  const referenceSuffix = `: ${sessionRef}`;
+  return message.endsWith(referenceSuffix) ? message.slice(0, -referenceSuffix.length) : message;
+}
+
+function skippedExportSession(session: StoredSession, error: unknown): ExportSkippedSession {
+  return {
+    agent: session.agent,
+    sessionRef: session.sessionRef,
+    title: session.library.name || session.title,
+    reason: exportFailureReason(error, session.sessionRef),
+  };
+}
+
+function closeExportSelection(
+  snapshot: AgentSnapshot,
+  requested: readonly StoredSession[],
+  strict: boolean,
+): { readonly sessions: readonly StoredSession[]; readonly skippedSessions: readonly ExportSkippedSession[] } {
+  const archive = agentAdapter(snapshot.agent).archive;
+  try {
+    return { sessions: archive.closeExportSelection(snapshot, requested), skippedSessions: [] };
+  } catch (error) {
+    if (strict) throw error;
+    const candidates: Array<{
+      readonly session: StoredSession;
+      readonly closure: readonly StoredSession[];
+    }> = [];
+    const skippedSessions: ExportSkippedSession[] = [];
+    for (const session of requested) {
+      try {
+        candidates.push({ session, closure: archive.closeExportSelection(snapshot, [session]) });
+      } catch (candidateError) {
+        skippedSessions.push(skippedExportSession(session, candidateError));
+      }
+    }
+    const accepted = candidates.map((candidate) => candidate.session);
+    try {
+      return {
+        sessions: archive.closeExportSelection(snapshot, accepted),
+        skippedSessions,
+      };
+    } catch (combinedError) {
+      const compatibleRoots: StoredSession[] = [];
+      let compatibleSessions: readonly StoredSession[] = [];
+      const ordered = candidates.toSorted((left, right) =>
+        right.closure.length - left.closure.length || left.session.sessionRef.localeCompare(right.session.sessionRef)
+      );
+      for (const candidate of ordered) {
+        if (compatibleSessions.some((session) => session.sessionRef === candidate.session.sessionRef)) continue;
+        try {
+          const next = archive.closeExportSelection(snapshot, [...compatibleRoots, candidate.session]);
+          compatibleRoots.push(candidate.session);
+          compatibleSessions = next;
+        } catch (candidateError) {
+          skippedSessions.push(skippedExportSession(candidate.session, candidateError));
+        }
+      }
+      if (compatibleRoots.length === accepted.length) throw combinedError;
+      return {
+        sessions: compatibleSessions,
+        skippedSessions,
+      };
+    }
+  }
 }
 
 async function prepareExport(
@@ -198,15 +280,19 @@ async function prepareExport(
   }
   const sources: ArchiveObjectSource[] = [];
   const entries: ArchiveEntry[] = [];
+  const skippedSessions: ExportSkippedSession[] = [];
   let objectNumber = 0;
   for (const agent of AGENTS) {
     const snapshot = snapshots.find((candidate) => candidate.agent === agent);
-    const sessions = selected.filter((session) => session.agent === agent);
-    if (snapshot === undefined || sessions.length === 0) continue;
+    const requested = selected.filter((session) => session.agent === agent);
+    if (snapshot === undefined || requested.length === 0) continue;
+    const selection = closeExportSelection(snapshot, requested, (options.sessions?.length ?? 0) !== 0);
+    skippedSessions.push(...selection.skippedSessions);
+    if (selection.sessions.length === 0) continue;
     const prepared = await agentAdapter(agent).archive.prepare({
       stateDirectory: options.stateDirectory,
       snapshot,
-      sessions,
+      sessions: selection.sessions,
       workspace,
       allocateObjectId: () => {
         objectNumber++;
@@ -221,8 +307,17 @@ async function prepareExport(
     }));
   }
   entries.sort((left, right) => left.sessionRef.localeCompare(right.sessionRef));
-  if (entries.length === 0) throw new Error("no history sessions are available to export");
-  return { output, sources, entries };
+  if (entries.length === 0) {
+    const skipped = skippedSessions[0];
+    if (skipped !== undefined) {
+      throw new Error(
+        `no safely migratable history sessions are available to export; ` +
+        `${skippedSessions.length} skipped; ${skipped.title} (${skipped.sessionRef}): ${skipped.reason}`,
+      );
+    }
+    throw new Error("no history sessions are available to export");
+  }
+  return { output, sources, entries, skippedSessions };
 }
 
 async function exportHistoryUnlocked(options: ExportHistoryOptions): Promise<ExportHistoryResult> {
@@ -240,7 +335,7 @@ async function exportHistoryUnlocked(options: ExportHistoryOptions): Promise<Exp
       validateArchiveSemantics(manifest);
       return manifest;
     });
-    return exportResult(written);
+    return exportResult(written, prepared.skippedSessions);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -261,6 +356,7 @@ async function planExportHistoryUnlocked(options: ExportHistoryOptions): Promise
         sessionRef: entry.sessionRef,
         title: entry.library.name || entry.title,
       })),
+      skippedSessions: prepared.skippedSessions,
     };
   } finally {
     await rm(workspace, { recursive: true, force: true });

@@ -917,6 +917,36 @@ test("Claude readable history migrates validated native closures and opaque sess
     assert.match((JSON.parse(blocked.stdout) as { error: { message: string } }).error.message,
       /cannot be exported without losing native history/);
 
+    const mixedArchive = path.join(root, "claude-mixed.agenthist");
+    const mixedExport = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "claude", "-o", mixedArchive,
+    ], runtime);
+    assert.equal(mixedExport.exitCode, 0, mixedExport.stderr);
+    const mixedData = (JSON.parse(mixedExport.stdout) as {
+      data: {
+        entries: number;
+        skipped_sessions: Array<{ session_ref: string; reason: string }>;
+      };
+    }).data;
+    assert.equal(mixedData.entries, 1);
+    assert.deepEqual(
+      mixedData.skipped_sessions.map((session) => session.session_ref).sort(),
+      [firstReference, blockedReference].sort(),
+    );
+    assert.match(
+      mixedData.skipped_sessions.find((session) => session.session_ref === firstReference)!.reason,
+      /coordinator session/,
+    );
+    assert.match(
+      mixedData.skipped_sessions.find((session) => session.session_ref === blockedReference)!.reason,
+      /cannot be exported without losing native history/,
+    );
+    const mixedInspect = await runCli(["--json", "inspect", mixedArchive], runtime);
+    assert.equal(mixedInspect.exitCode, 0, mixedInspect.stderr);
+    assert.deepEqual((JSON.parse(mixedInspect.stdout) as {
+      data: { entries: Array<{ session_ref: string }> };
+    }).data.entries.map((entry) => entry.session_ref), [migratedReference]);
+
     const targetConfig = path.join(root, "target-claude");
     const targetWork = path.join(root, "target-work");
     const targetHistoricalWork = path.join(root, "target-historical-work");

@@ -413,9 +413,11 @@ test("OpenCode scan preserves readable multi-session history without copying con
     assert.equal(listData.total_sessions, 3);
     assert.deepEqual(new Set(listData.sessions.map((session) => session.provider)), new Set(["provider-alpha", "provider-beta"]));
 
-    const capturedIndex = JSON.parse(await readFile(path.join(
+    const capturedIndexPath = path.join(
       state, "history", "opencode", "snapshots", head.snapshotId, "index.json",
-    ), "utf8")) as {
+    );
+    const capturedIndexBytes = await readFile(capturedIndexPath, "utf8");
+    const capturedIndex = JSON.parse(capturedIndexBytes) as {
       sessions: Array<{
         nativeId: string;
         native: { carrier: {
@@ -485,6 +487,28 @@ test("OpenCode scan preserves readable multi-session history without copying con
     assert.equal(inspectedEntries.length, 3);
     assert.equal(inspectedEntries.find((entry) => entry.title === "Archived conversation")?.objects, 2);
     assert.equal(inspectedEntries.find((entry) => entry.title === "Root conversation")?.objects, 3);
+
+    const rootCarrier = capturedIndex.sessions.find((session) => session.nativeId === "ses_root_alpha")!.native.carrier;
+    const archivedCarrier = capturedIndex.sessions.find((session) =>
+      session.nativeId === "ses_archived_beta")!.native.carrier;
+    archivedCarrier.toolOutputs = rootCarrier.toolOutputs.map((output) => ({ ...output }));
+    await writeFile(capturedIndexPath, `${JSON.stringify(capturedIndex, null, 2)}\n`, { mode: 0o600 });
+    const ownershipExport = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "opencode",
+      "-o", path.join(root, "opencode-ownership.agenthist"),
+    ], runtime);
+    assert.equal(ownershipExport.exitCode, 0, ownershipExport.stderr);
+    const ownershipData = (JSON.parse(ownershipExport.stdout) as {
+      data: {
+        entries: number;
+        skipped_sessions: Array<{ session_ref: string; title: string; reason: string }>;
+      };
+    }).data;
+    assert.equal(ownershipData.entries, 2);
+    assert.equal(ownershipData.skipped_sessions.length, 1);
+    assert.equal(ownershipData.skipped_sessions[0]!.title, "Archived conversation");
+    assert.match(ownershipData.skipped_sessions[0]!.reason, /tool-output ownership is ambiguous/);
+    await writeFile(capturedIndexPath, capturedIndexBytes, { mode: 0o600 });
 
     const targetRoot = path.join(root, "target-opencode");
     const targetDatabase = path.join(targetRoot, "opencode.db");
@@ -788,15 +812,95 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
       /active revert/,
     );
 
+    const head = JSON.parse(await readFile(path.join(state, "history", "opencode", "head.json"), "utf8")) as {
+      snapshotId: string;
+    };
+    const indexPath = path.join(state, "history", "opencode", "snapshots", head.snapshotId, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      sessions: Array<{
+        nativeId: string;
+        native: {
+          revertStatus: "empty" | "present" | "unknown";
+          carrier: { sidecars: string[]; plan: string | null };
+        };
+      }>;
+    };
+    const revertedState = index.sessions.find((session) => session.nativeId === "ses_z_active_revert")!;
+    revertedState.native.revertStatus = "empty";
+    revertedState.native.carrier.sidecars = ["opencode/session_diff/ses_wrong_owner.json"];
+    await writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 });
+    const sidecarExport = await runCli([
+      "--json", "--state-dir", state, "export", "--session", reverted.session_ref,
+      "-o", path.join(root, "wrong-sidecar.agenthist"),
+    ], runtime);
+    assert.equal(sidecarExport.exitCode, 3);
+    assert.match((JSON.parse(sidecarExport.stdout) as { error: { message: string } }).error.message,
+      /session_diff ownership is not portable/);
+
+    revertedState.native.carrier.sidecars = [];
+    revertedState.native.carrier.plan = "opencode/plan/ses_wrong_owner.md";
+    await writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 });
+    const planExport = await runCli([
+      "--json", "--state-dir", state, "export", "--session", reverted.session_ref,
+      "-o", path.join(root, "wrong-plan.agenthist"),
+    ], runtime);
+    assert.equal(planExport.exitCode, 3);
+    assert.match((JSON.parse(planExport.stdout) as { error: { message: string } }).error.message,
+      /session plan ownership is not portable/);
+
     const fullExport = await runCli([
       "--json", "--state-dir", state, "export", "--agent", "opencode",
       "-o", path.join(root, "full.agenthist"),
     ], runtime);
-    assert.notEqual(fullExport.exitCode, 0);
+    assert.equal(fullExport.exitCode, 0, fullExport.stderr);
+    const fullData = (JSON.parse(fullExport.stdout) as {
+      data: {
+        entries: number;
+        skipped_sessions: Array<{
+          session_ref: string;
+          title: string;
+          reason: string;
+        }>;
+      };
+    }).data;
+    assert.ok(fullData.entries > 0);
+    assert.deepEqual(
+      fullData.skipped_sessions.map((session) => session.session_ref).sort(),
+      [pending.session_ref, reverted.session_ref].sort(),
+    );
     assert.match(
-      (JSON.parse(fullExport.stdout) as { error: { message: string } }).error.message,
+      fullData.skipped_sessions.find((session) => session.session_ref === pending.session_ref)!.reason,
       /pending input/,
     );
+    assert.match(
+      fullData.skipped_sessions.find((session) => session.session_ref === reverted.session_ref)!.reason,
+      /session plan ownership is not portable/,
+    );
+
+    const inspected = await runCli([
+      "--json", "inspect", path.join(root, "full.agenthist"),
+    ], runtime);
+    assert.equal(inspected.exitCode, 0, inspected.stderr);
+    const exportedReferences = (JSON.parse(inspected.stdout) as {
+      data: { entries: Array<{ session_ref: string }> };
+    }).data.entries.map((entry) => entry.session_ref);
+    assert.ok(exportedReferences.includes(safe.session_ref));
+    assert.ok(!exportedReferences.includes(pending.session_ref));
+    assert.ok(!exportedReferences.includes(reverted.session_ref));
+
+    const humanExport = await runCli([
+      "--state-dir", state, "export", "--agent", "opencode",
+      "-o", path.join(root, "full-human.agenthist"),
+    ], runtime);
+    assert.equal(humanExport.exitCode, 0, humanExport.stderr);
+    assert.equal(humanExport.stdout.startsWith("Warning: partial export\n"), true);
+    assert.match(humanExport.stdout, /Resolve the issues, run 'agenthist scan', then export again\./);
+    assert.match(humanExport.stdout, /Skipped\s+2/);
+    assert.match(humanExport.stdout, /Skipped sessions/);
+    assert.match(humanExport.stdout, /Archived conversation/);
+    assert.match(humanExport.stdout, /Reverted conversation/);
+    assert.match(humanExport.stdout, new RegExp(pending.session_ref));
+    assert.match(humanExport.stdout, new RegExp(reverted.session_ref));
 
   } finally {
     await rm(root, { recursive: true, force: true });

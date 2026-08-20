@@ -173,6 +173,36 @@ export async function runExport(
     ...(agents.size === 0 ? {} : { agents: [...agents] }),
     ...(output === undefined ? {} : { output }),
   });
+  const skippedHuman = result.skippedSessions.length === 0
+    ? ""
+    : "\n" + colorizeHuman("Skipped sessions", "warning_strong", globals.color) + "\n" +
+      renderBoundedHumanDetails(
+        result.skippedSessions,
+        (session) => `  ${colorizeHuman(
+          truncateDisplay(session.title, Math.max(24, humanOutputWidth(runtime.output?.columns) - 4)),
+          "strong",
+          globals.color,
+        )}\n` + humanFields([
+          { label: "Agent", value: agentLabel(session.agent), tone: "info" },
+          { label: "Session", value: session.sessionRef, tone: "muted" },
+          { label: "Reason", value: session.reason, tone: "warning" },
+        ], globals.color, "    "),
+        "skipped session",
+        20,
+      );
+  const partialWarning = result.skippedSessions.length === 0
+    ? ""
+    : colorizeHuman("Warning: partial export", "warning_strong", globals.color) + "\n" +
+      colorizeHuman(
+        `Skipped ${humanCount(result.skippedSessions.length, "session")} that could not be migrated safely.`,
+        "warning",
+        globals.color,
+      ) + "\n" +
+      colorizeHuman(
+        "Resolve the issues, run 'agenthist scan', then export again.",
+        "warning",
+        globals.color,
+      ) + "\n\n";
   return success(
     "export",
     {
@@ -181,12 +211,23 @@ export async function runExport(
       sha256: result.sha256,
       entries: result.entries,
       agents: result.agents,
+      skipped_sessions: result.skippedSessions.map((session) => ({
+        agent: session.agent,
+        session_ref: session.sessionRef,
+        title: session.title,
+        reason: session.reason,
+      })),
       objects: result.objects,
       resources: result.resources,
     },
-    humanTitle("History exported", globals.color) + "\n" + humanFields([
+    partialWarning + humanTitle("History exported", globals.color) + "\n" + humanFields([
       { label: "Archive", value: result.file, tone: "success" },
       { label: "Sessions", value: String(result.entries) },
+      {
+        label: "Skipped",
+        value: String(result.skippedSessions.length),
+        tone: result.skippedSessions.length === 0 ? "muted" : "warning_strong",
+      },
       { label: "Size", value: humanBytes(result.sizeBytes) },
       { label: "SHA-256", value: result.sha256 },
       { label: "Objects", value: String(result.objects) },
@@ -195,7 +236,7 @@ export async function runExport(
       result.agents.map((item) =>
         `  ${colorizeHuman(padDisplay(agentLabel(item.agent), AGENT_COLUMN_WIDTH), "info", globals.color)}  ` +
         `${humanCount(item.sessions, "session")}\n`
-      ).join(""),
+      ).join("") + skippedHuman,
     globals.json,
   );
 }

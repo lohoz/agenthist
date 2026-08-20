@@ -6,6 +6,7 @@ import type {
   ArchiveObjectBinding,
 } from "../../../domain/archive.js";
 import type { AgentSnapshot, JsonValue, StoredSession } from "../../../domain/history.js";
+import { samePath, type PathFlavor } from "../../../domain/host-path.js";
 import type { ArchiveObjectSource } from "../../../infrastructure/archive.js";
 import { snapshotRawPath } from "../../../infrastructure/history-store.js";
 import {
@@ -487,6 +488,7 @@ export async function validateCodexHistoryBaseBoundary(
 export async function validateCodexArchiveObjects(
   entries: readonly ArchiveEntry[],
   extracted: ReadonlyMap<string, string>,
+  pathFlavor: PathFlavor,
 ): Promise<void> {
   const byNativeId = new Map(entries.map((entry) => [entry.nativeId, entry]));
   const parsedByNativeId = new Map<string, Awaited<ReturnType<typeof parseCodexRollout>>>();
@@ -496,7 +498,8 @@ export async function validateCodexArchiveObjects(
     if (file === undefined) throw new Error(`Codex rollout object is missing: ${entry.sessionRef}`);
     const parsed = await parseCodexRollout(file);
     if (
-      parsed.nativeId !== entry.nativeId || parsed.cwd !== entry.context || parsed.provider !== entry.provider ||
+      parsed.nativeId !== entry.nativeId || !samePath(parsed.cwd, entry.context, pathFlavor) ||
+      parsed.provider !== entry.provider ||
       (entry.model !== "" && parsed.model !== entry.model) || !lineageEqual(readCodexLineage(entry), parsedLineage(parsed))
     ) throw new Error(`Codex archive metadata disagrees with its rollout: ${entry.sessionRef}`);
     parsedByNativeId.set(entry.nativeId, parsed);

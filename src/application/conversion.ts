@@ -20,6 +20,7 @@ import {
 import type { ImportEntry, ImportProjection } from "../domain/import.js";
 import type { StoredSession } from "../domain/history.js";
 import { sourceRevision } from "../domain/history-identity.js";
+import type { PathFlavor } from "../domain/host-path.js";
 import type { PortableContextSession } from "../domain/portable-context.js";
 import {
   managedResourceReference,
@@ -64,6 +65,7 @@ export interface PrepareImportConversionsOptions {
   readonly destinations: ReadonlyMap<string, Agent>;
   readonly workspace: string;
   readonly allocateObjectId: () => string;
+  readonly pathFlavor: PathFlavor;
 }
 
 interface PreparedItem extends ImportConversionPlanItem {
@@ -304,6 +306,7 @@ function completeProjectedEntries(
 async function validateProjectedEntries(
   entries: readonly ImportEntry[],
   sources: readonly ArchiveObjectSource[],
+  pathFlavor: PathFlavor,
 ): Promise<void> {
   const extracted = new Map(sources.map((source) => [source.id, source.filePath]));
   const descriptors = new Map<string, ArchiveManifest["objects"][number]>();
@@ -328,6 +331,7 @@ async function validateProjectedEntries(
     await agentAdapter(agent).archive.validateObjects(
       entries.filter((entry) => entry.agent === agent),
       extracted,
+      pathFlavor,
     );
   }
 }
@@ -372,6 +376,6 @@ export async function prepareImportConversions(
   );
   const entries = completeProjectedEntries(prepared, projected.entries, managed.bindings);
   const sources = [...projected.sources, ...managed.sources];
-  await validateProjectedEntries(entries, sources);
+  await validateProjectedEntries(entries, sources, options.pathFlavor);
   return { statusCounts: counts, items, entries, sources };
 }

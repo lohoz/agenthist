@@ -51,6 +51,7 @@ export async function validateArchiveObjects(
     await agentAdapter(agent).archive.validateObjects(
       manifest.entries.filter((entry) => entry.agent === agent),
       extracted,
+      manifest.pathFlavor,
     );
   }
 }

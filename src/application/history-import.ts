@@ -494,6 +494,7 @@ async function prepareImportPlan(
     objects: extractedObjects,
     destinations,
     workspace,
+    pathFlavor: sourcePathFlavor,
     allocateObjectId: () => {
       objectNumber++;
       if (objectNumber > 999_999) throw new Error("import plan exceeds the object identity limit");

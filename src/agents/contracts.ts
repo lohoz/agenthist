@@ -9,6 +9,7 @@ import type { AgentSnapshot, StoredSession } from "../domain/history.js";
 import type { PreparedPortableSource } from "../domain/conversion.js";
 import type { ImportEntry } from "../domain/import.js";
 import type { PathMappings } from "../domain/path-mapping.js";
+import type { PathFlavor } from "../domain/host-path.js";
 import type {
   TransactionDirection,
   TransactionJournal,
@@ -87,6 +88,7 @@ export interface AgentArchiveCapability {
   validateObjects(
     entries: readonly ArchiveEntry[],
     extracted: ReadonlyMap<string, string>,
+    pathFlavor: PathFlavor,
   ): Promise<void>;
   closeSelection(entries: readonly ArchiveEntry[], selected: ReadonlySet<string>): ReadonlySet<string>;
 }

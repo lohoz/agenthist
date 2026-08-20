@@ -22,6 +22,7 @@ import {
   parseAgent,
   readValue,
   renderBoundedHumanDetails,
+  renderBoundedHumanRecords,
   success,
   type CliResult,
   type CliRuntime,
@@ -90,8 +91,8 @@ function renderImportHuman(file: string, result: ImportHistoryResult, color: boo
       `    ${humanCount(route.sessions, "session")} · ` +
       `${colorizeHuman(quality, qualityTone, color)}\n` +
       renderHumanLossFindings(route.findings, color);
-  }).join("");
-  const workspaceHuman = renderBoundedHumanDetails(
+  }).join("\n");
+  const workspaceHuman = renderBoundedHumanRecords(
     result.workspaces,
     (workspace) => {
       if (workspace.status === "mapped") {
@@ -106,7 +107,7 @@ function renderImportHuman(file: string, result: ImportHistoryResult, color: boo
   );
   const blockedHuman = result.blockedSessions.length === 0
     ? ""
-    : "\n" + humanSection("Blocked sessions", color) + renderBoundedHumanDetails(
+    : "\n" + humanSection("Blocked sessions", color) + renderBoundedHumanRecords(
     result.blockedSessions,
     (session) => `  ${colorizeHuman(session.sourceSessionRef, "strong", color)}\n` +
       `    ${colorizeHuman(agentLabel(session.sourceAgent), "info", color)} -> ` +
@@ -177,7 +178,7 @@ export async function runExport(
   const skippedHuman = result.skippedSessions.length === 0
     ? ""
     : "\n" + colorizeHuman("Skipped sessions", "warning_strong", globals.color) + "\n" +
-      renderBoundedHumanDetails(
+      renderBoundedHumanRecords(
         result.skippedSessions,
         (session) => `  ${colorizeHuman(
           truncateDisplay(session.title, Math.max(24, humanOutputWidth(runtime.output?.columns) - 4)),
@@ -319,8 +320,8 @@ export async function runInspect(
       `${colorizeHuman(title, "strong", globals.color)}\n` +
       `      ${colorizeHuman(entry.session_ref, "muted", globals.color)}\n` +
       `      ${colorizeHuman(entry.context || "No workspace", "muted", globals.color)}\n`;
-  }).join("");
-  const workspaceHuman = renderBoundedHumanDetails(
+  }).join("\n");
+  const workspaceHuman = renderBoundedHumanRecords(
     result.workspaces,
     (workspace) => `  ${colorizeHuman(workspace.source, "strong", globals.color)}\n` +
       `    ${humanCount(workspace.sessions, "session")} · ` +

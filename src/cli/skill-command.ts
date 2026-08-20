@@ -36,7 +36,7 @@ function renderTargets(items: readonly SkillTargetResult[], color: boolean): str
     `  ${colorizeHuman(padDisplay(label, width), "strong", color)}  ` +
       `${colorizeHuman(item.status.toUpperCase(), tone, color)}\n` +
       `    ${colorizeHuman(item.directory, "muted", color)}\n`
-  ).join("");
+  ).join("\n");
 }
 
 export async function runSkill(

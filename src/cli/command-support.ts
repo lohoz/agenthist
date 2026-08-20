@@ -79,18 +79,38 @@ export function colorizeHuman(
   return paint(text, tone, enabled);
 }
 
+function renderBoundedHumanItems<T>(
+  items: readonly T[],
+  render: (item: T) => string,
+  label: string,
+  limit: number,
+  separator: string,
+): string {
+  const shown = items.slice(0, limit).map(render).join(separator);
+  const remaining = items.length - Math.min(items.length, limit);
+  const omittedLabel = remaining === 1 ? label : `${label}s`;
+  return shown + (remaining === 0
+    ? ""
+    : `${shown === "" ? "" : separator}... ${remaining} more ${omittedLabel}; ` +
+      "use --json for complete details.\n");
+}
+
 export function renderBoundedHumanDetails<T>(
   items: readonly T[],
   render: (item: T) => string,
   label: string,
   limit = HUMAN_DETAIL_LIMIT,
 ): string {
-  const shown = items.slice(0, limit).map(render).join("");
-  const remaining = items.length - Math.min(items.length, limit);
-  const omittedLabel = remaining === 1 ? label : `${label}s`;
-  return shown + (remaining === 0
-    ? ""
-    : `... ${remaining} more ${omittedLabel}; use --json for complete details.\n`);
+  return renderBoundedHumanItems(items, render, label, limit, "");
+}
+
+export function renderBoundedHumanRecords<T>(
+  items: readonly T[],
+  render: (item: T) => string,
+  label: string,
+  limit = HUMAN_DETAIL_LIMIT,
+): string {
+  return renderBoundedHumanItems(items, render, label, limit, "\n");
 }
 
 export function readValue(args: readonly string[], index: number, flag: string): [string, number] {

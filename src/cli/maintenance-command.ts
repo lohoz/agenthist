@@ -13,7 +13,7 @@ import {
   colorizeHuman,
   invalidArguments,
   readValue,
-  renderBoundedHumanDetails,
+  renderBoundedHumanRecords,
   success,
   type CliResult,
   type CliRuntime,
@@ -56,7 +56,7 @@ export async function runTransaction(
   if (action === "list") {
     if (args.length !== 1) throw invalidArguments("transaction list accepts no arguments");
     const transactions = await listNativeTransactions(globals.stateDirectory);
-    const human = renderBoundedHumanDetails(
+    const human = renderBoundedHumanRecords(
       transactions,
       (item) => `  ${colorizeHuman(item.transactionRef, "strong", globals.color)}\n` +
         `    ${colorizeHuman(item.operation, "info", globals.color)} · ` +
@@ -120,7 +120,7 @@ export async function runTransaction(
     ...(result.transaction === undefined ? {} : { transaction: transactionSummary(result.transaction) }),
   };
   const findings = result.preview.findings.length === 0 ? "" : "\n" + humanSection("Target state", globals.color) +
-    renderBoundedHumanDetails(
+    renderBoundedHumanRecords(
       result.preview.findings,
       (finding) => {
         const positions = [
@@ -253,7 +253,7 @@ export async function runCodex(
     })),
   };
   const changes = result.changes.length === 0 ? "" : "\n" + humanSection("Changes", globals.color) +
-    renderBoundedHumanDetails(
+    renderBoundedHumanRecords(
       result.changes,
       (change) => `  ${colorizeHuman(change.sessionRef, "strong", globals.color)}\n` +
         `    ${change.before} -> ${change.after}\n`,

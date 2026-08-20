@@ -4,7 +4,11 @@ import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { colorizeHuman, renderBoundedHumanDetails } from "../../../src/cli/command-support.js";
+import {
+  colorizeHuman,
+  renderBoundedHumanDetails,
+  renderBoundedHumanRecords,
+} from "../../../src/cli/command-support.js";
 import { runCli, VERSION } from "../../../src/cli/program.js";
 
 test("human detail rendering is bounded without changing the complete result", () => {
@@ -21,6 +25,9 @@ test("human detail rendering is bounded without changing the complete result", (
   assert.match(compact, /^item 0\nitem 1\n/);
   assert.doesNotMatch(compact, /item 2\n/);
   assert.match(compact, /\.\.\. 50 more items/);
+
+  const records = renderBoundedHumanRecords(["first", "second"], (item) => `${item}\n`, "record");
+  assert.equal(records, "first\n\nsecond\n");
 });
 
 test("human status colors degrade to plain text", () => {

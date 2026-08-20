@@ -348,7 +348,7 @@ export async function runScan(
         `  ${colorizeHuman(agentLabel(item.agent), "strong", globals.color)}\n` +
         `    ${humanCount(item.sessions, "session")} · ${item.reusedSessions} reused · ${item.rebuiltSessions} rebuilt` +
         `${item.removedSessions === 0 ? "" : ` · ${item.removedSessions} removed`}\n`
-      ).join("") +
+      ).join("\n") +
       (result.warnings.length === 0 ? "" : "\n" + humanSection("Warnings", globals.color) +
         renderBoundedHumanDetails(
           result.agents.flatMap((item) => item.warnings.map((warning) => ({ agent: item.agent, warning }))),
@@ -605,7 +605,7 @@ export async function runHistory(
           `      ${colorizeHuman(`${context} · ${hit.session.updatedAt}`, "muted", globals.color)}\n` +
           `      ${colorizeHuman(hit.session.sessionRef, "muted", globals.color)}\n`;
       })
-      .join("");
+      .join("\n");
     return success(
       "history search",
       {

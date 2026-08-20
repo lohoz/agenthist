@@ -18,7 +18,7 @@ It can also find recurring requirements, preferences, and working methods across
 ## ✨ Highlights
 
 - **Unified history:** Browse, search, and organize sessions from supported Agents through one interface.
-- **Selective migration:** Export by Agent or session, preview the archive on another machine, and choose what to restore.
+- **Selective migration:** Export all history or filter by Agent, workspace, or session, then choose what to restore on the target machine.
 - **Cross-Agent conversion:** Choose a target Agent during import and see what each conversion preserves, omits, or reconstructs.
 - **Safe writes:** Detect duplicate sessions, report conflicts before writing, and recover or roll back changes through transactions.
 - **Cross-session experience extraction:** Find recurring requirements and working methods while retaining source evidence and ungrouped samples.
@@ -100,26 +100,28 @@ Update the history library and export it on the source machine:
 
 ```bash
 agenthist scan
-agenthist export -o backup.agenthist
+agenthist export # Open interactive selection
+agenthist export --all -o backup.agenthist # Export all history
 ```
 
-`export` includes every safely migratable session by default and reports anything skipped. Filter by Agent or `session-ref` when you only need part of the history:
+Bulk export includes every safely migratable session and reports anything skipped. For a partial export, use repeatable filters:
 
 ```bash
 agenthist export --agent codex -o codex.agenthist
+agenthist export --workspace ../api --workspace ../web -o projects.agenthist
 agenthist export --session <session-ref> -o selected.agenthist
 ```
 
-An explicit `--session` selection is strict: the export fails instead of silently omitting that session.
+`--agent`, `--workspace`, and `--session` can be combined. An explicit `--session` selection is strict: the export fails instead of silently omitting that session.
 
 After moving the file to the target machine, run:
 
 ```bash
-agenthist inspect backup.agenthist
-agenthist import backup.agenthist
+agenthist inspect backup.agenthist # Inspect the archive
+agenthist import backup.agenthist # Open interactive import
 ```
 
-`import` opens an interactive interface for selecting sessions, target Agents, workspace paths, and the final write plan. All sessions are selected by default and routed back to their source Agents.
+All sessions are selected by default and routed back to their source Agents.
 
 ### Workspace paths
 

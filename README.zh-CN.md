@@ -18,7 +18,7 @@ AgentHist 集中整理受支持的编程 Agent 会话，提供查看、搜索、
 ## ✨ Highlights
 
 - **统一历史**：扫描受支持的 Agent，在一个入口中查看、搜索和整理会话。
-- **选择性迁移**：按 Agent 或会话导出，在目标机器上预览并选择需要恢复的内容。
+- **选择性迁移**：导出全部历史，或按 Agent、工作区、会话筛选，再在目标机器上选择需要恢复的内容。
 - **跨 Agent 转换**：导入时选择目标 Agent，逐会话报告保留、省略和重建的内容。
 - **安全写入**：识别重复会话，在写入前报告冲突，并通过 transaction 支持恢复和回滚。
 - **跨会话经验提炼**：发现长期使用 Agent 时反复出现的要求和工作方法，保留原文证据与未归类样本。
@@ -100,26 +100,28 @@ agenthist history show <session-ref>
 
 ```bash
 agenthist scan
-agenthist export -o backup.agenthist
+agenthist export # 进入交互选择
+agenthist export --all -o backup.agenthist # 导出全部历史
 ```
 
-`export` 默认包含所有可安全迁移的会话，并明确列出跳过的内容。只迁移部分内容时，可以按 Agent 或 `session-ref` 筛选：
+批量导出包含所有可安全迁移的会话，并明确列出跳过的内容。只导出部分历史时，可以重复使用筛选参数：
 
 ```bash
 agenthist export --agent codex -o codex.agenthist
+agenthist export --workspace ../api --workspace ../web -o projects.agenthist
 agenthist export --session <session-ref> -o selected.agenthist
 ```
 
-显式指定 `--session` 时会采用严格模式；该会话无法导出就会直接报错，不会静默跳过。
+`--agent`、`--workspace` 和 `--session` 可以组合使用。显式指定 `--session` 时采用严格模式，该会话无法导出就会直接报错。
 
 把文件复制到目标机器后运行：
 
 ```bash
-agenthist inspect backup.agenthist
-agenthist import backup.agenthist
+agenthist inspect backup.agenthist # 查看归档内容
+agenthist import backup.agenthist # 进入交互导入
 ```
 
-`import` 会打开交互界面，用于选择会话、目标 Agent、工作区路径和最终写入计划。默认选择全部会话，并恢复到各自的来源 Agent。
+默认选择全部会话，并恢复到各自的来源 Agent。
 
 ### 工作区路径
 

@@ -70,14 +70,14 @@ organize AgentHist's library view. These commands leave native Agent history unc
 ## Export and inspect
 
 \`\`\`bash
-agenthist export -o backup.agenthist
+agenthist export --all -o backup.agenthist
 agenthist inspect backup.agenthist
 \`\`\`
 
 Bulk export includes every safely migratable scanned session by default and reports anything
-skipped. Repeat \`--agent\` to narrow the bulk selection. An explicit \`--session\` selection is
-strict and fails when a selected session cannot be exported. Existing output files are not
-overwritten.
+skipped. Repeat or combine \`--agent\`, \`--workspace\`, and \`--session\` to narrow the selection.
+An explicit \`--session\` selection is strict and fails when a selected session cannot be exported.
+Existing output files are not overwritten.
 
 ## Import or convert
 

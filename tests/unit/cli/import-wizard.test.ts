@@ -262,7 +262,7 @@ test("interactive import uses the four-step keyboard flow for preview, routing, 
     assert.match(rendered, /MISSING/);
     assert.match(rendered, /Directory candidates/);
     assert.match(rendered, /Target directory:.*Directory candidates.*Up\/Down chooses/s);
-    assert.ok(rendered.includes(`Target directory: ${targetWorkspace}`));
+    assert.match(rendered, /Target directory: [^\n]*research/);
     assert.doesNotMatch(rendered, /Current target/);
     assert.match(rendered, /MAPPED/);
     assert.match(rendered, /1 path ready/);

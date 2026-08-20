@@ -170,6 +170,32 @@ test("one archive preflights and imports multiple Agents in product order", asyn
       [CLAUDE_WORKSPACE, CODEX_WORKSPACE].sort(),
     );
 
+    const workspaceArchive = path.join(root, "one-workspace.agenthist");
+    const workspaceExport = await runCli([
+      "--json", "--state-dir", sourceState, "export",
+      "--workspace", CODEX_WORKSPACE,
+      "--workspace", CODEX_WORKSPACE,
+      "-o", workspaceArchive,
+    ], runtime);
+    assert.equal(workspaceExport.exitCode, 0, workspaceExport.stderr);
+    assert.equal((JSON.parse(workspaceExport.stdout) as { data: { entries: number } }).data.entries, 1);
+    const workspaceInspect = await runCli(["--json", "inspect", workspaceArchive], runtime);
+    assert.equal(workspaceInspect.exitCode, 0, workspaceInspect.stderr);
+    assert.deepEqual((JSON.parse(workspaceInspect.stdout) as {
+      data: { entries: Array<{ agent: string; context: string }> };
+    }).data.entries.map(({ agent, context }) => ({ agent, context })), [
+      { agent: "codex", context: CODEX_WORKSPACE },
+    ]);
+
+    const missingWorkspace = await runCli([
+      "--json", "--state-dir", sourceState, "export",
+      "--workspace", nativeFixturePath("/source/missing"),
+      "-o", path.join(root, "missing-workspace.agenthist"),
+    ], runtime);
+    assert.equal(missingWorkspace.exitCode, 3);
+    assert.match((JSON.parse(missingWorkspace.stdout) as { error: { message: string } }).error.message,
+      /selected history workspace was not found/);
+
     const catalog = await openImportCatalog(archive, root);
     try {
       assert.deepEqual(catalog.entries.map((entry) => entry.agent).sort(), ["claude", "codex"]);

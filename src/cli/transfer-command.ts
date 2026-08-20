@@ -5,15 +5,19 @@ import { pathFlavorForPlatform, samePath } from "../domain/host-path.js";
 import {
   AGENTS,
   agentLabel,
+  defaultExportArchivePath,
   exportHistory,
   importHistoryArchive,
   inspectHistoryArchive,
   listCodexImportProviders,
   openImportCatalog,
+  openExportCatalog,
   MAX_INSPECT_LIMIT,
+  planExportHistory,
   resolveCodexCurrentProvider,
   type Agent,
   type ConversionFinding,
+  type ExportHistoryResult,
   type ImportHistoryResult,
 } from "../application/index.js";
 import {
@@ -44,6 +48,7 @@ import {
   detectImportWizardLanguage,
   type ImportWizardLanguage,
 } from "./import-wizard/copy.js";
+import { runExportWizard } from "./export-wizard/index.js";
 import { withLiveStatus } from "./live-status.js";
 import { displayWidth, padDisplay, truncateDisplay } from "./terminal-layout.js";
 
@@ -144,10 +149,19 @@ export async function runExport(
   runtime: CliRuntime,
 ): Promise<CliResult> {
   const agents = new Set<Agent>();
+  const workspaces: string[] = [];
   const sessions: string[] = [];
   let output: string | undefined;
+  let allHistory = false;
+  let language: ImportWizardLanguage | undefined;
   for (let index = 0; index < args.length;) {
     const argument = args[index]!;
+    if (argument === "--all") {
+      if (allHistory) throw invalidArguments("export accepts --all once");
+      allHistory = true;
+      index++;
+      continue;
+    }
     if (argument === "--agent" || argument.startsWith("--agent=")) {
       const [value, next] = readValue(args, index, "--agent");
       agents.add(parseAgent(value));
@@ -160,21 +174,78 @@ export async function runExport(
       index = next;
       continue;
     }
+    if (argument === "--workspace" || argument.startsWith("--workspace=")) {
+      const [value, next] = readValue(args, index, "--workspace");
+      workspaces.push(value);
+      index = next;
+      continue;
+    }
     if (argument === "-o" || argument === "--output" || argument.startsWith("--output=")) {
       const [value, next] = readValue(args, index, "--output");
       output = value;
       index = next;
       continue;
     }
+    if (argument === "--language" || argument.startsWith("--language=")) {
+      if (language !== undefined) throw invalidArguments("export accepts one --language value");
+      const [value, next] = readValue(args, index, "--language");
+      if (value !== "en" && value !== "zh") throw invalidArguments("export language must be en or zh");
+      language = value;
+      index = next;
+      continue;
+    }
     throw invalidArguments(`unknown export flag: ${argument}`);
   }
-  const result = await withLiveStatus(runtime, globals, "Exporting Agent history", () => exportHistory({
-    stateDirectory: globals.stateDirectory,
-    cwd: runtime.cwd ?? process.cwd(),
-    sessions,
-    ...(agents.size === 0 ? {} : { agents: [...agents] }),
-    ...(output === undefined ? {} : { output }),
-  }));
+  if (allHistory && (agents.size !== 0 || workspaces.length !== 0 || sessions.length !== 0)) {
+    throw invalidArguments("export --all cannot be combined with --agent, --workspace, or --session");
+  }
+  const cwd = runtime.cwd ?? process.cwd();
+  const interactiveRequest = !allHistory && agents.size === 0 && workspaces.length === 0 &&
+    sessions.length === 0 && output === undefined;
+  let result: ExportHistoryResult;
+  if (interactiveRequest && !globals.json && runtime.input?.isTTY === true && runtime.output?.isTTY === true) {
+    const catalog = await withLiveStatus(runtime, globals, "Opening scanned history", () =>
+      openExportCatalog(globals.stateDirectory));
+    const outcome = await runExportWizard({
+      catalog,
+      input: runtime.input,
+      output: runtime.output,
+      cwd,
+      archive: defaultExportArchivePath(cwd),
+      color: globals.color,
+      language: language ?? detectImportWizardLanguage(runtime.environment ?? process.env),
+      plan: (request) => planExportHistory({
+        stateDirectory: globals.stateDirectory,
+        cwd,
+        ...request,
+      }),
+      execute: (request) => exportHistory({
+        stateDirectory: globals.stateDirectory,
+        cwd,
+        ...request,
+      }),
+    });
+    if (outcome.status === "cancelled") {
+      return success(
+        "export",
+        { status: "cancelled", entries: 0 },
+        `${colorizeHuman("Export cancelled.", "warning", globals.color)}\n` +
+          `${colorizeHuman("No archive written.", "muted", globals.color)}\n`,
+        false,
+      );
+    }
+    result = outcome.result;
+  } else {
+    if (language !== undefined) throw invalidArguments("--language is only available for interactive export");
+    result = await withLiveStatus(runtime, globals, "Exporting Agent history", () => exportHistory({
+      stateDirectory: globals.stateDirectory,
+      cwd,
+      sessions,
+      workspaces,
+      ...(agents.size === 0 ? {} : { agents: [...agents] }),
+      ...(output === undefined ? {} : { output }),
+    }));
+  }
   const skippedHuman = result.skippedSessions.length === 0
     ? ""
     : "\n" + colorizeHuman("Skipped sessions", "warning_strong", globals.color) + "\n" +

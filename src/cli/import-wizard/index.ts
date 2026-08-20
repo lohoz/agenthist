@@ -5,6 +5,7 @@ import {
   agentLabel,
   type Agent,
   type ConversationItem,
+  type HistorySelectionCatalog,
   type ImportCatalog,
   type ImportCatalogEntry,
   type ImportHistoryResult,
@@ -52,20 +53,41 @@ export interface ImportWizardRequest {
   readonly piSessionRoot?: string;
 }
 
-export interface ImportWizardOptions {
+export type WizardCopyProvider = (language: ImportWizardLanguage) => ImportWizardCopy;
+
+interface SessionSelectionOptions {
+  readonly catalog: HistorySelectionCatalog;
+  readonly color?: boolean;
+  readonly targetAgent?: Agent;
+}
+
+export interface HistorySelectionScreenOptions extends SessionSelectionOptions {
+  readonly agents?: readonly Agent[];
+  readonly sessions: readonly string[];
+  readonly copy?: WizardCopyProvider;
+  readonly step?: number;
+}
+
+export type HistorySelectionScreenOutcome =
+  | { readonly status: "cancelled" }
+  | {
+    readonly status: "selected";
+    readonly sessions: readonly string[];
+    readonly included: readonly ImportCatalogEntry[];
+  };
+
+export interface ImportWizardOptions extends SessionSelectionOptions {
   readonly catalog: ImportCatalog;
   readonly input: NodeJS.ReadableStream;
   readonly output: NodeJS.WritableStream;
   readonly agents?: readonly Agent[];
   readonly sessions: readonly string[];
-  readonly targetAgent?: Agent;
   readonly pathMappings: readonly string[];
   readonly providerPolicy: string;
   readonly codexHome?: string;
   readonly opencodeDataRoot?: string;
   readonly claudeConfigRoot?: string;
   readonly piSessionRoot?: string;
-  readonly color?: boolean;
   readonly language?: ImportWizardLanguage;
   resolveCodexCurrentProvider(): Promise<string>;
   listCodexProviders(): Promise<readonly ImportWizardCodexProvider[]>;
@@ -131,8 +153,11 @@ type ScreenMove = "next" | "back" | "cancel" | "refresh";
 type KeyHint = readonly [key: string, action: string];
 type FooterHints = readonly [readonly KeyHint[], readonly KeyHint[]];
 
-function copyFor(terminal: ImportTerminal): ImportWizardCopy {
-  return importWizardCopy(terminal.language);
+function copyFor(
+  terminal: ImportTerminal,
+  provider: WizardCopyProvider = importWizardCopy,
+): ImportWizardCopy {
+  return provider(terminal.language);
 }
 
 function switchLanguage(terminal: ImportTerminal, key: TerminalKey): boolean {
@@ -141,8 +166,11 @@ function switchLanguage(terminal: ImportTerminal, key: TerminalKey): boolean {
   return true;
 }
 
-function languageHint(terminal: ImportTerminal): KeyHint {
-  return ["l", copyFor(terminal).actions.switchLanguage];
+function languageHint(
+  terminal: ImportTerminal,
+  provider: WizardCopyProvider = importWizardCopy,
+): KeyHint {
+  return ["l", copyFor(terminal, provider).actions.switchLanguage];
 }
 
 function oneLine(value: string, maximum: number): string {
@@ -247,7 +275,7 @@ function buildScopeRows(
   return rows;
 }
 
-function closedSelection(catalog: ImportCatalog, explicit: ReadonlySet<string>): readonly ImportCatalogEntry[] {
+function closedSelection(catalog: HistorySelectionCatalog, explicit: ReadonlySet<string>): readonly ImportCatalogEntry[] {
   return explicit.size === 0 ? [] : catalog.closeSelection([...explicit]);
 }
 
@@ -345,7 +373,7 @@ function progressLine(step: number, width: number, color: boolean, copy: ImportW
     return paint(value, "step_pending", color);
   }).join("  >  ");
   if (displayWidth(full) <= width) return full;
-  return paint(`[${step + 1}/${copy.steps.length} ${copy.steps[step]}]`, "step_current", color);
+  return paint(`[${step + 1}/${copy.steps.length} ${copy.steps[step] ?? ""}]`, "step_current", color);
 }
 
 function contentRows(terminal: ImportTerminal): number {
@@ -361,8 +389,9 @@ function frameLines(
   body: readonly string[],
   footers: FooterHints,
   notice?: string,
+  provider: WizardCopyProvider = importWizardCopy,
 ): string[] {
-  const copy = copyFor(terminal);
+  const copy = copyFor(terminal, provider);
   const width = terminal.width;
   const capacity = contentRows(terminal);
   const visibleBody = body.slice(0, capacity);
@@ -408,8 +437,9 @@ function drawFrame(
   body: readonly string[],
   footers: FooterHints,
   notice?: string,
+  provider: WizardCopyProvider = importWizardCopy,
 ): void {
-  terminal.draw(frameLines(terminal, color, step, title, summary, body, footers, notice));
+  terminal.draw(frameLines(terminal, color, step, title, summary, body, footers, notice, provider));
 }
 
 function promptFrame(
@@ -420,8 +450,9 @@ function promptFrame(
   details: readonly string[],
   prompt: string,
   value: string,
+  provider: WizardCopyProvider = importWizardCopy,
 ): readonly string[] {
-  const copy = copyFor(terminal);
+  const copy = copyFor(terminal, provider);
   const width = terminal.width;
   const available = Math.max(8, width - prompt.length);
   const shown = truncateDisplay(value, available);
@@ -788,19 +819,20 @@ function conversationLines(
 
 async function showPreview(
   terminal: ImportTerminal,
-  options: ImportWizardOptions,
+  options: SessionSelectionOptions,
   step: number,
   entry: ImportCatalogEntry,
   target: Agent,
+  provider: WizardCopyProvider = importWizardCopy,
 ): Promise<"back" | "cancel"> {
   const color = options.color === true;
-  let copy = copyFor(terminal);
+  let copy = copyFor(terminal, provider);
   drawFrame(terminal, color, step, copy.preview.title, agentLabel(entry.agent),
-    [copy.preview.loading], [[], [["Esc", copy.actions.back], languageHint(terminal)]]);
+    [copy.preview.loading], [[], [["Esc", copy.actions.back], languageHint(terminal, provider)]], undefined, provider);
   const preview: ImportSessionPreview = await options.catalog.preview(entry.sessionRef);
   let scroll = 0;
   while (true) {
-    copy = copyFor(terminal);
+    copy = copyFor(terminal, provider);
     const metadata = [
       paint(oneLine(preview.title, terminal.width), "strong", color),
       "",
@@ -843,8 +875,9 @@ async function showPreview(
       [[
         ["Up/Down", copy.actions.scroll],
         ["PgUp/PgDn", copy.actions.page],
-      ], [["Esc", copy.actions.back], languageHint(terminal)]],
+      ], [["Esc", copy.actions.back], languageHint(terminal, provider)]],
       remaining === 0 ? undefined : copy.preview.remainingLines(remaining),
+      provider,
     );
     const key = await terminal.key();
     if (interrupted(key)) return "cancel";
@@ -861,9 +894,11 @@ async function showPreview(
 
 async function selectSessionsScreen(
   terminal: ImportTerminal,
-  options: ImportWizardOptions,
+  options: SessionSelectionOptions,
   allowed: readonly ImportCatalogEntry[],
   state: WizardState,
+  provider: WizardCopyProvider = importWizardCopy,
+  step = 0,
 ): Promise<ScreenMove> {
   const color = options.color === true;
   let activePane: BrowserPane = "scopes";
@@ -871,10 +906,10 @@ async function selectSessionsScreen(
   let sessionCursor = 0;
   let notice = state.reviewNotice === undefined
     ? undefined
-    : copyFor(terminal).review.excluded(state.reviewNotice.blocked, state.reviewNotice.related);
+    : copyFor(terminal, provider).review.excluded(state.reviewNotice.blocked, state.reviewNotice.related);
   delete state.reviewNotice;
   while (true) {
-    const copy = copyFor(terminal);
+    const copy = copyFor(terminal, provider);
     const selected = closedSelection(options.catalog, state.explicit);
     const selectedReferences = new Set(selected.map((entry) => entry.sessionRef));
     for (const entry of selected) {
@@ -888,7 +923,7 @@ async function selectSessionsScreen(
       drawFrame(
         terminal,
         color,
-        0,
+        step,
         copy.selection.title,
         summary,
         [copy.selection.noMatches, "", copy.selection.searchStatus(state.query, copy.common.allSessions)],
@@ -896,8 +931,9 @@ async function selectSessionsScreen(
           ["/", copy.actions.changeSearch],
           ["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll],
           ["Enter", copy.actions.next],
-        ], [["Esc", copy.actions.exit], languageHint(terminal)]],
+        ], [["Esc", copy.actions.exit], languageHint(terminal, provider)]],
         notice,
+        provider,
       );
       notice = undefined;
       const key = await terminal.key();
@@ -913,11 +949,12 @@ async function selectSessionsScreen(
         const value = await terminal.line((input) => promptFrame(
           terminal,
           color,
-          0,
+          step,
           copy.selection.searchTitle,
           [copy.selection.searchHelp],
           copy.selection.searchPrompt,
           input,
+          provider,
         ), state.query);
         if (value !== undefined) state.query = value;
       }
@@ -957,17 +994,18 @@ async function selectSessionsScreen(
       ["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll],
       ...(activePane === "sessions" ? [["v", copy.actions.preview] as KeyHint] : []),
       ["Esc", copy.actions.exit],
-      languageHint(terminal),
+      languageHint(terminal, provider),
     ]];
     drawFrame(
       terminal,
       color,
-      0,
+      step,
       copy.selection.title,
       summary,
       body,
       footer,
       notice,
+      provider,
     );
     notice = undefined;
     const key = await terminal.key();
@@ -984,11 +1022,12 @@ async function selectSessionsScreen(
       const value = await terminal.line((input) => promptFrame(
         terminal,
         color,
-        0,
+        step,
         copy.selection.searchTitle,
         [copy.selection.searchHelp],
         copy.selection.searchPrompt,
         input,
+        provider,
       ), state.query);
       if (value !== undefined) {
         state.query = value;
@@ -1035,9 +1074,10 @@ async function selectSessionsScreen(
         const move = await showPreview(
           terminal,
           options,
-          0,
+          step,
           entry,
           state.targets.get(entry.sessionRef) ?? entry.agent,
+          provider,
         );
         if (move === "cancel") return "cancel";
       } else {
@@ -1045,6 +1085,44 @@ async function selectSessionsScreen(
       }
     }
   }
+}
+
+export async function chooseHistorySessions(
+  terminal: ImportTerminal,
+  options: HistorySelectionScreenOptions,
+): Promise<HistorySelectionScreenOutcome> {
+  const allowed = options.agents === undefined
+    ? options.catalog.entries
+    : options.catalog.entries.filter((entry) => options.agents!.includes(entry.agent));
+  if (allowed.length === 0) throw new Error("no selectable history sessions are available");
+  const byReference = new Set(allowed.map((entry) => entry.sessionRef));
+  const initialReferences = options.sessions.length === 0
+    ? allowed.map((entry) => entry.sessionRef)
+    : options.sessions;
+  const missing = initialReferences.find((reference) => !byReference.has(reference));
+  if (missing !== undefined) throw new Error(`selected history session was not found: ${missing}`);
+  const state: WizardState = {
+    explicit: new Set(initialReferences),
+    targets: new Map(allowed.map((entry) => [entry.sessionRef, options.targetAgent ?? entry.agent])),
+    pathMappings: [],
+    roots: {},
+    providerPolicy: "current",
+    query: "",
+  };
+  const move = await selectSessionsScreen(
+    terminal,
+    options,
+    allowed,
+    state,
+    options.copy ?? importWizardCopy,
+    options.step ?? 0,
+  );
+  if (move === "cancel") return { status: "cancelled" };
+  return {
+    status: "selected",
+    sessions: allowed.filter((entry) => state.explicit.has(entry.sessionRef)).map((entry) => entry.sessionRef),
+    included: closedSelection(options.catalog, state.explicit),
+  };
 }
 
 function targetOrder(source: Agent): readonly Agent[] {

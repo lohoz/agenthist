@@ -8,7 +8,7 @@ import { AGENTS, type Agent } from "../domain/agent.js";
 import type { ArchiveEntry, ArchiveManifest, ArchiveObjectBinding } from "../domain/archive.js";
 import { libraryState, type AgentSnapshot, type LibraryState, type StoredSession } from "../domain/history.js";
 import { managedResourceReference, type ManagedResourceReference } from "../domain/resource.js";
-import { pathFlavorForPlatform } from "../domain/host-path.js";
+import { pathFlavorForPlatform, pathImplementation, samePath } from "../domain/host-path.js";
 import {
   readArchive,
   writeArchive,
@@ -18,13 +18,20 @@ import {
 import { loadSnapshot, pathsOverlap } from "../infrastructure/history-store.js";
 import { withStateReadLock } from "../infrastructure/state.js";
 import { validateArchiveObjects, validateArchiveSemantics } from "./archive-validation.js";
+import type {
+  HistoryCatalogEntry,
+  HistorySelectionCatalog,
+  HistorySessionPreview,
+} from "./history-catalog.js";
 
 export interface ExportHistoryOptions {
   readonly stateDirectory: string;
   readonly output?: string;
   readonly cwd?: string;
   readonly agents?: readonly Agent[];
+  readonly workspaces?: readonly string[];
   readonly sessions?: readonly string[];
+  readonly strictSessions?: boolean;
 }
 
 export interface ArchiveArtifactResult {
@@ -52,6 +59,7 @@ export interface ExportHistoryPlanItem {
   readonly agent: Agent;
   readonly sessionRef: string;
   readonly title: string;
+  readonly workspace: string;
 }
 
 export interface ExportHistoryPlan {
@@ -61,6 +69,10 @@ export interface ExportHistoryPlan {
   readonly resources: number;
   readonly agents: readonly { readonly agent: Agent; readonly sessions: number }[];
   readonly items: readonly ExportHistoryPlanItem[];
+  readonly skippedSessions: readonly ExportSkippedSession[];
+}
+
+export interface ExportCatalog extends HistorySelectionCatalog {
   readonly skippedSessions: readonly ExportSkippedSession[];
 }
 
@@ -136,6 +148,23 @@ function selectSessions(all: readonly StoredSession[], selected: readonly string
   return matches;
 }
 
+function selectWorkspaces(
+  all: readonly StoredSession[],
+  selected: readonly string[],
+  cwd: string,
+): StoredSession[] {
+  if (selected.length === 0) return [...all];
+  const flavor = pathFlavorForPlatform();
+  const implementation = pathImplementation(flavor);
+  const requested = selected.map((workspace) => implementation.resolve(cwd, workspace));
+  for (const workspace of requested) {
+    if (!all.some((session) => samePath(session.context, workspace, flavor))) {
+      throw new Error(`selected history workspace was not found: ${workspace}`);
+    }
+  }
+  return all.filter((session) => requested.some((workspace) => samePath(session.context, workspace, flavor)));
+}
+
 async function selectedSnapshots(stateDirectory: string, selected?: readonly Agent[]): Promise<AgentSnapshot[]> {
   const agents = selected ?? AGENTS;
   const snapshots: AgentSnapshot[] = [];
@@ -151,9 +180,13 @@ async function selectedSnapshots(stateDirectory: string, selected?: readonly Age
   return snapshots;
 }
 
-function defaultArchiveName(cwd: string): string {
+export function defaultExportArchivePath(cwd: string): string {
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   return path.join(cwd, `agenthist-${timestamp}-${randomUUID().slice(0, 8)}.agenthist`);
+}
+
+export function resolveExportArchivePath(cwd: string, output?: string): string {
+  return path.resolve(cwd, output ?? defaultExportArchivePath(cwd));
 }
 
 export function archiveArtifactResult(result: ArchiveWriteResult): ArchiveArtifactResult {
@@ -264,17 +297,89 @@ function closeExportSelection(
   }
 }
 
+function exportCatalogEntry(session: StoredSession): HistoryCatalogEntry {
+  return {
+    sessionRef: session.sessionRef,
+    agent: session.agent,
+    nativeId: session.nativeId,
+    title: session.library.name || session.title,
+    workspace: session.context,
+    model: session.model,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    nativeArchived: session.nativeArchived,
+    libraryState: libraryState(session.library),
+    tags: session.library.tags,
+    resourceCount: 0,
+  };
+}
+
+export async function openExportCatalog(
+  stateDirectory: string,
+  agents?: readonly Agent[],
+): Promise<ExportCatalog> {
+  return withStateReadLock(stateDirectory, async () => {
+    const snapshots = await selectedSnapshots(stateDirectory, agents);
+    const available: StoredSession[] = [];
+    const skipped: ExportSkippedSession[] = [];
+    for (const snapshot of snapshots) {
+      const selection = closeExportSelection(snapshot, snapshot.sessions, false);
+      available.push(...selection.sessions);
+      skipped.push(...selection.skippedSessions);
+    }
+    const byReference = new Map(available.map((session) => [session.sessionRef, session]));
+    const entries = available.map(exportCatalogEntry).toSorted((left, right) => {
+      const agentOrder = AGENTS.indexOf(left.agent) - AGENTS.indexOf(right.agent);
+      return agentOrder === 0 ? left.sessionRef.localeCompare(right.sessionRef) : agentOrder;
+    });
+    const skippedSessions = skipped
+      .filter((session) => !byReference.has(session.sessionRef))
+      .filter((session, index, all) => all.findIndex((item) => item.sessionRef === session.sessionRef) === index)
+      .toSorted((left, right) => left.sessionRef.localeCompare(right.sessionRef));
+    return {
+      entries,
+      skippedSessions,
+      closeSelection(sessionRefs) {
+        if (sessionRefs.length === 0) return [];
+        const requested = new Set(sessionRefs);
+        const missing = [...requested].find((sessionRef) => !byReference.has(sessionRef));
+        if (missing !== undefined) throw new Error(`selected history session was not found: ${missing}`);
+        const closed: StoredSession[] = [];
+        for (const snapshot of snapshots) {
+          const selected = snapshot.sessions.filter((session) => requested.has(session.sessionRef));
+          if (selected.length !== 0) {
+            closed.push(...agentAdapter(snapshot.agent).archive.closeExportSelection(snapshot, selected));
+          }
+        }
+        return closed.map(exportCatalogEntry).toSorted((left, right) => {
+          const agentOrder = AGENTS.indexOf(left.agent) - AGENTS.indexOf(right.agent);
+          return agentOrder === 0 ? left.sessionRef.localeCompare(right.sessionRef) : agentOrder;
+        });
+      },
+      async preview(sessionRef): Promise<HistorySessionPreview> {
+        const session = byReference.get(sessionRef);
+        if (session === undefined) throw new Error(`selected history session was not found: ${sessionRef}`);
+        return { ...exportCatalogEntry(session), conversation: session.conversation };
+      },
+    };
+  });
+}
+
 async function prepareExport(
   options: ExportHistoryOptions,
   workspace: string,
 ): Promise<PreparedExport> {
   const snapshots = await selectedSnapshots(options.stateDirectory, options.agents);
   const all = snapshots.flatMap((snapshot) => snapshot.sessions);
-  const selected = selectSessions(all, options.sessions ?? []);
+  const cwd = options.cwd ?? process.cwd();
+  const selected = selectSessions(
+    selectWorkspaces(all, options.workspaces ?? [], cwd),
+    options.sessions ?? [],
+  );
   if (selected.length === 0) {
     throw new Error("no history sessions are available to export");
   }
-  const output = path.resolve(options.cwd ?? process.cwd(), options.output ?? defaultArchiveName(options.cwd ?? process.cwd()));
+  const output = resolveExportArchivePath(cwd, options.output);
   if (pathsOverlap(options.stateDirectory, output)) {
     throw new Error("archive output cannot be inside AgentHist state");
   }
@@ -286,7 +391,11 @@ async function prepareExport(
     const snapshot = snapshots.find((candidate) => candidate.agent === agent);
     const requested = selected.filter((session) => session.agent === agent);
     if (snapshot === undefined || requested.length === 0) continue;
-    const selection = closeExportSelection(snapshot, requested, (options.sessions?.length ?? 0) !== 0);
+    const selection = closeExportSelection(
+      snapshot,
+      requested,
+      (options.sessions?.length ?? 0) !== 0 && options.strictSessions !== false,
+    );
     skippedSessions.push(...selection.skippedSessions);
     if (selection.sessions.length === 0) continue;
     const prepared = await agentAdapter(agent).archive.prepare({
@@ -355,6 +464,7 @@ async function planExportHistoryUnlocked(options: ExportHistoryOptions): Promise
         agent: entry.agent,
         sessionRef: entry.sessionRef,
         title: entry.library.name || entry.title,
+        workspace: entry.context,
       })),
       skippedSessions: prepared.skippedSessions,
     };

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { AGENTS, type Agent } from "../domain/agent.js";
 import type { ArchiveEntry } from "../domain/archive.js";
-import { libraryState, type ConversationItem, type LibraryState } from "../domain/history.js";
+import { libraryState } from "../domain/history.js";
 import { readArchive } from "../infrastructure/archive.js";
 import { parsePathMappings } from "../domain/path-mapping.js";
 import { createArchiveSourceMaterializer, type ArchiveSourceMaterializer } from "./archive-source.js";
@@ -14,27 +14,16 @@ import {
   inspectImportWorkspaces,
   type ImportWorkspaceInspection,
 } from "./workspace-projection.js";
+import type {
+  HistoryCatalogEntry,
+  HistorySelectionCatalog,
+  HistorySessionPreview,
+} from "./history-catalog.js";
 
-export interface ImportCatalogEntry {
-  readonly sessionRef: string;
-  readonly agent: Agent;
-  readonly nativeId: string;
-  readonly title: string;
-  readonly workspace: string;
-  readonly model: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly nativeArchived: boolean;
-  readonly libraryState: LibraryState;
-  readonly tags: readonly string[];
-  readonly resourceCount: number;
-}
+export type ImportCatalogEntry = HistoryCatalogEntry;
+export type ImportSessionPreview = HistorySessionPreview;
 
-export interface ImportSessionPreview extends ImportCatalogEntry {
-  readonly conversation: readonly ConversationItem[];
-}
-
-export interface ImportCatalog {
+export interface ImportCatalog extends HistorySelectionCatalog {
   readonly file: string;
   readonly sizeBytes: number;
   readonly sha256: string;
@@ -49,7 +38,7 @@ export interface ImportCatalog {
   close(): Promise<void>;
 }
 
-function publicEntry(entry: ArchiveEntry): ImportCatalogEntry {
+function publicEntry(entry: ArchiveEntry): HistoryCatalogEntry {
   return {
     sessionRef: entry.sessionRef,
     agent: entry.agent,

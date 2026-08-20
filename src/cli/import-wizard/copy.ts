@@ -5,7 +5,7 @@ export type ImportWizardFindingDisposition = "exact" | "degraded" | "blocked" | 
 
 export interface ImportWizardCopy {
   readonly brand: string;
-  readonly steps: readonly [string, string, string, string];
+  readonly steps: readonly string[];
   readonly actions: {
     readonly back: string;
     readonly exit: string;

@@ -42,6 +42,11 @@ export type {
   ImportSessionPreview,
 } from "./import-catalog.js";
 export type {
+  HistoryCatalogEntry,
+  HistorySelectionCatalog,
+  HistorySessionPreview,
+} from "./history-catalog.js";
+export type {
   ImportWorkspaceAvailability,
   ImportWorkspaceInspection,
 } from "./workspace-projection.js";
@@ -94,13 +99,17 @@ export type {
 
 export {
   DEFAULT_INSPECT_LIMIT,
+  defaultExportArchivePath,
   exportHistory,
   inspectHistoryArchive,
   MAX_INSPECT_LIMIT,
+  openExportCatalog,
   planExportHistory,
+  resolveExportArchivePath,
 } from "./transfer.js";
 export type {
   ArchiveArtifactResult,
+  ExportCatalog,
   ExportHistoryPlan,
   ExportHistoryPlanItem,
   ExportHistoryOptions,

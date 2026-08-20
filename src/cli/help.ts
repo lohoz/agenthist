@@ -76,11 +76,18 @@ Uninstall removes AgentHist-managed copies from all supported locations. Custom 
 same skill name is preserved.
 `,
   export: `Usage:
-  agenthist export [--agent <agent>]... [--session <session-ref>]... [-o <file.agenthist>]
+  agenthist export [--all]
+                   [--agent <agent>]... [--workspace <directory>]...
+                   [--session <session-ref>]... [-o <file.agenthist>]
+                   [--language <en|zh>]
 
 Export a portable .agenthist file from scanned history. Bulk export includes every safely
-migratable session and reports anything skipped. --agent is an optional bulk filter.
+migratable session and reports anything skipped. --agent and --workspace are optional bulk filters.
+Workspace paths are resolved from the current directory and match scanned workspaces exactly.
 An explicit --session selection is strict and fails if that session cannot be exported.
+In a terminal, using no filters opens the export guide for browsing, previewing, selecting,
+and confirming history. --all bypasses the guide. Scripts and --json remain non-interactive.
+--language selects the initial guide language and is unavailable for direct export.
 Existing output files are never overwritten.
 `,
   inspect: `Usage:

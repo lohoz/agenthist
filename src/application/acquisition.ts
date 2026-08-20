@@ -75,8 +75,19 @@ export interface ScanHistoryResult {
   readonly warnings: readonly string[];
 }
 
+export type ScanHistoryProgress =
+  | { readonly phase: "detecting" }
+  | { readonly phase: "preparing"; readonly totalAgents: number }
+  | {
+      readonly phase: "scanning";
+      readonly agent: Agent;
+      readonly currentAgent: number;
+      readonly totalAgents: number;
+    };
+
 export interface ScanHistoryOptions extends HistorySourceOptions {
   readonly stateDirectory: string;
+  readonly onProgress?: (progress: ScanHistoryProgress) => void;
 }
 
 function sourceOptions(options: HistorySourceOptions, agent: Agent): AgentSourceOptions {
@@ -160,6 +171,7 @@ export async function scanHistory(options: ScanHistoryOptions): Promise<ScanHist
   let selected = selectAgents(options.agents ?? []);
   let inspections: readonly HistorySourceInspection[] = [];
   if (options.agents === undefined || options.agents.length === 0) {
+    options.onProgress?.({ phase: "detecting" });
     const detected = await detect(options);
     inspections = detected.agents;
     const failure = detected.agents.find((agent) => agent.status === "error" || agent.status === "blocked");
@@ -181,11 +193,18 @@ export async function scanHistory(options: ScanHistoryOptions): Promise<ScanHist
     }
   }
 
+  options.onProgress?.({ phase: "preparing", totalAgents: selected.length });
   await ensureStateDirectory(options.stateDirectory, await scanSourceRoots(options, selected));
   return withStateWriteLock(options.stateDirectory, async () => {
     await assertNoPendingTransactions(options.stateDirectory);
     const agents: ScannedHistoryAgent[] = [];
-    for (const agent of selected) {
+    for (const [index, agent] of selected.entries()) {
+      options.onProgress?.({
+        phase: "scanning",
+        agent,
+        currentAgent: index + 1,
+        totalAgents: selected.length,
+      });
       const snapshot = await agentAdapter(agent).source.scan({
         stateDirectory: options.stateDirectory,
         ...sourceOptions(options, agent),

@@ -49,6 +49,7 @@ import {
   humanTitle,
   type HumanField,
 } from "./human-output.js";
+import { withLiveStatus } from "./live-status.js";
 import {
   displayWidth,
   padDisplay,
@@ -297,11 +298,22 @@ export async function runScan(
     throw invalidArguments(`unknown scan flag: ${argument}`);
   }
   const sources = historySourceOptions(globals, runtime);
-  const result = await scanHistory({
+  const result = await withLiveStatus(runtime, globals, "Preparing history scan", (status) => scanHistory({
     stateDirectory: globals.stateDirectory,
     ...sources,
     ...(requested.size === 0 ? {} : { agents: [...requested] }),
-  });
+    onProgress: (progress) => {
+      if (progress.phase === "detecting") {
+        status.update("Detecting Agent history");
+      } else if (progress.phase === "preparing") {
+        status.update(`Preparing ${humanCount(progress.totalAgents, "Agent source")}`);
+      } else {
+        status.update(
+          `[${progress.currentAgent}/${progress.totalAgents}] Scanning ${agentLabel(progress.agent)} history`,
+        );
+      }
+    },
+  }));
   if (result.status === "not_detected") {
     return success(
       "scan",
@@ -543,7 +555,8 @@ export async function runHistory(
   const outputWidth = humanOutputWidth(runtime.output?.columns);
   if (action === "list") {
     const flags = parseListFlags(args.slice(1));
-    const result = await listHistory({ stateDirectory: globals.stateDirectory, ...flags });
+    const result = await withLiveStatus(runtime, globals, "Loading history", () =>
+      listHistory({ stateDirectory: globals.stateDirectory, ...flags }));
     const human = result.sessions
       .map((session, index) => sessionListItem(session, index, sessionTitleWidth(outputWidth), globals.color))
       .join("\n");
@@ -572,7 +585,8 @@ export async function runHistory(
       throw invalidArguments("history search requires a literal query");
     }
     const flags = parseListFlags(args.slice(2));
-    const result = await searchHistory({ stateDirectory: globals.stateDirectory, ...flags }, query);
+    const result = await withLiveStatus(runtime, globals, "Searching history", () =>
+      searchHistory({ stateDirectory: globals.stateDirectory, ...flags }, query));
     const human = result.hits
       .map((hit, index) => {
         const fullTitle = hit.session.title || "(untitled)";
@@ -615,7 +629,8 @@ export async function runHistory(
   }
   if (action === "show") {
     if (args.length !== 2) throw invalidArguments("history show requires exactly one session reference");
-    const session = await showHistory(globals.stateDirectory, args[1]!);
+    const session = await withLiveStatus(runtime, globals, "Loading history session", () =>
+      showHistory(globals.stateDirectory, args[1]!));
     const body = renderHistoryConversation(session.conversation, globals.color, outputWidth);
     return success(
       "history show",

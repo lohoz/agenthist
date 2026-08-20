@@ -63,7 +63,20 @@ export interface PrepareExperienceReviewOptions extends ExperienceDryRunOptions 
   readonly outputDirectory?: string;
   readonly fetcher?: typeof fetch;
   readonly processRunner?: AnalysisProcessRunner;
+  readonly onProgress?: (progress: PrepareExperienceReviewProgress) => void;
 }
+
+export type PrepareExperienceReviewProgress =
+  | { readonly phase: "indexing" }
+  | { readonly phase: "configuring" }
+  | {
+      readonly phase: "extracting";
+      readonly currentBatch: number;
+      readonly totalBatches: number;
+    }
+  | { readonly phase: "organizing" }
+  | { readonly phase: "publishing" }
+  | { readonly phase: "finalizing" };
 
 export interface PrepareExperienceReviewResult {
   readonly dryRun: false;
@@ -307,9 +320,11 @@ export async function prepareExperienceReview(
   options: PrepareExperienceReviewOptions,
 ): Promise<PrepareExperienceReviewResult> {
   return withStateWriteLock(options.stateDirectory, async () => {
+    options.onProgress?.({ phase: "indexing" });
     const prepared = await prepareExperienceReviewInputsUnlocked(options);
     let configuration: AnalysisConfiguration;
     try {
+      options.onProgress?.({ phase: "configuring" });
       configuration = await resolveAnalysisConfiguration({
         cwd: options.cwd,
         environment: options.environment,
@@ -356,7 +371,12 @@ export async function prepareExperienceReview(
     let discardedUnrequestedDiscoveries = 0;
     let usage = EMPTY_USAGE;
     let completedBatches = 0;
-    for (const batch of batches) {
+    for (const [index, batch] of batches.entries()) {
+      options.onProgress?.({
+        phase: "extracting",
+        currentBatch: index + 1,
+        totalBatches: batches.length,
+      });
       const batchRef = fastDiscoveryBatchRef(batch.cards, configuration.fast.profileFingerprint);
       try {
         const completed = await requestFastBatch(
@@ -404,6 +424,7 @@ export async function prepareExperienceReview(
     const availableCards = prepared.routingCards.filter((card) => results.has(card.cardRef));
     const ordered = availableCards.map((card) => results.get(card.cardRef)!);
     const remainingCards = prepared.routingCards.length - availableCards.length;
+    options.onProgress?.({ phase: remainingCards > 0 ? "finalizing" : "organizing" });
     const consolidation = remainingCards > 0
       ? waitingForFastConsolidation(configuration.deep, prepared.maximumDeepInputTokens)
       : await consolidateExperiences({
@@ -419,6 +440,7 @@ export async function prepareExperienceReview(
     const review = remainingCards !== 0 || consolidation.status === "partial"
       ? undefined
       : await (async () => {
+          options.onProgress?.({ phase: "publishing" });
           const pack = buildExperienceReviewPack({
             selection: prepared.selection.mode,
             sessions: prepared.corpus.sessions,

@@ -20,6 +20,7 @@ import {
   type GlobalOptions,
 } from "./command-support.js";
 import { humanCount, humanFields, humanSection, humanTitle } from "./human-output.js";
+import { withLiveStatus } from "./live-status.js";
 import { displayWidth, padDisplay } from "./terminal-layout.js";
 
 const DEFAULT_CODEX_PROVIDER = "openai";
@@ -46,7 +47,11 @@ function transactionSummary(summary: Awaited<ReturnType<typeof listNativeTransac
   };
 }
 
-export async function runTransaction(globals: GlobalOptions, args: readonly string[]): Promise<CliResult> {
+export async function runTransaction(
+  globals: GlobalOptions,
+  args: readonly string[],
+  runtime: CliRuntime,
+): Promise<CliResult> {
   const action = args[0];
   if (action === "list") {
     if (args.length !== 1) throw invalidArguments("transaction list accepts no arguments");
@@ -87,9 +92,16 @@ export async function runTransaction(globals: GlobalOptions, args: readonly stri
     mode = candidate;
   }
   if (mode === undefined) throw invalidArguments(`transaction ${action} requires --dry-run or --apply`);
-  const result = action === "rollback"
-    ? await rollbackNativeTransaction(globals.stateDirectory, reference, mode === "apply")
-    : await recoverNativeTransaction(globals.stateDirectory, reference, mode === "apply");
+  const result = await withLiveStatus(
+    runtime,
+    globals,
+    action === "rollback"
+      ? mode === "apply" ? "Rolling back native history" : "Planning transaction rollback"
+      : mode === "apply" ? "Recovering native history" : "Planning transaction recovery",
+    () => action === "rollback"
+      ? rollbackNativeTransaction(globals.stateDirectory, reference, mode === "apply")
+      : recoverNativeTransaction(globals.stateDirectory, reference, mode === "apply"),
+  );
   const data = {
     transaction_ref: result.preview.transactionRef,
     operation: result.preview.operation,
@@ -218,10 +230,15 @@ export async function runCodex(
     throw invalidArguments(`unknown Codex provider flag: ${argument}`);
   }
   if (mode === undefined) throw invalidArguments("codex provider unify requires --dry-run or --apply");
-  const result = await unifyCodexHistoryProviders(
-    codexProviderOptions(globals, runtime),
-    target ?? DEFAULT_CODEX_PROVIDER,
-    mode === "apply",
+  const result = await withLiveStatus(
+    runtime,
+    globals,
+    mode === "apply" ? "Unifying Codex history providers" : "Planning Codex provider changes",
+    () => unifyCodexHistoryProviders(
+      codexProviderOptions(globals, runtime),
+      target ?? DEFAULT_CODEX_PROVIDER,
+      mode === "apply",
+    ),
   );
   const data = {
     target_provider: result.targetProvider,

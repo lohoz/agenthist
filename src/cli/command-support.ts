@@ -22,6 +22,10 @@ export interface CliRuntime {
   readonly color?: boolean;
   readonly input?: NodeJS.ReadableStream & { readonly isTTY?: boolean };
   readonly output?: NodeJS.WritableStream & { readonly isTTY?: boolean; readonly columns?: number };
+  readonly progressOutput?: NodeJS.WritableStream & {
+    readonly isTTY?: boolean;
+    readonly columns?: number;
+  };
 }
 
 export interface GlobalOptions {

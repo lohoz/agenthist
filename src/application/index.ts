@@ -63,6 +63,7 @@ export type {
   OpenCodeHistorySourceOptions,
   ScannedHistoryAgent,
   ScanHistoryOptions,
+  ScanHistoryProgress,
   ScanHistoryResult,
 } from "./acquisition.js";
 
@@ -191,5 +192,6 @@ export type {
   ExperienceReviewPublication,
   ExperienceWorkspaceSelection,
   PrepareExperienceReviewOptions,
+  PrepareExperienceReviewProgress,
   PrepareExperienceReviewResult,
 } from "../experience/index.js";

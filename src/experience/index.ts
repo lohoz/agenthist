@@ -29,6 +29,7 @@ export type { AnalysisProcessRunner } from "./model.js";
 export { experienceReviewResultJson, prepareExperienceReview } from "./evidence-extractor.js";
 export type {
   PrepareExperienceReviewOptions,
+  PrepareExperienceReviewProgress,
   PrepareExperienceReviewResult,
 } from "./evidence-extractor.js";
 export type { ExperienceReviewPublication } from "./review-writer.js";

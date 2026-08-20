@@ -127,7 +127,7 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
     if (command === "export") return await runExport(globals, commandArgs.slice(1), runtime);
     if (command === "inspect") return await runInspect(globals, commandArgs.slice(1), runtime);
     if (command === "import") return await runImport(globals, commandArgs.slice(1), runtime);
-    if (command === "transaction") return await runTransaction(globals, commandArgs.slice(1));
+    if (command === "transaction") return await runTransaction(globals, commandArgs.slice(1), runtime);
     if (command === "codex") return await runCodex(globals, commandArgs.slice(1), runtime);
     throw invalidArguments(`unknown command: ${command ?? ""}`);
   } catch (error) {

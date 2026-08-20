@@ -20,6 +20,7 @@ import {
   type GlobalOptions,
 } from "./command-support.js";
 import { humanCount, humanFields, humanSection, humanTitle, type HumanField } from "./human-output.js";
+import { withLiveStatus } from "./live-status.js";
 
 function tokenValue(value: string, flag: string): number {
   if (!/^(?:0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -56,12 +57,13 @@ async function runModelCheck(
   if (args[0] !== "check" || args.length !== 1) {
     throw invalidArguments("experience model requires exactly: experience model check");
   }
-  const result = await checkExperienceModels({
-    cwd: runtime.cwd ?? process.cwd(),
-    environment: runtime.environment ?? process.env,
-    ...(runtime.fetcher === undefined ? {} : { fetcher: runtime.fetcher }),
-    ...(runtime.analysisProcessRunner === undefined ? {} : { processRunner: runtime.analysisProcessRunner }),
-  });
+  const result = await withLiveStatus(runtime, globals, "Checking experience models", () =>
+    checkExperienceModels({
+      cwd: runtime.cwd ?? process.cwd(),
+      environment: runtime.environment ?? process.env,
+      ...(runtime.fetcher === undefined ? {} : { fetcher: runtime.fetcher }),
+      ...(runtime.analysisProcessRunner === undefined ? {} : { processRunner: runtime.analysisProcessRunner }),
+    }));
   const fast = result.profiles[0]!;
   const deep = result.profiles[1]!;
   const modelLabel = (profile: typeof fast): string => profile.modelConfigured ? profile.model : "Agent default";
@@ -204,12 +206,22 @@ async function runReview(
     ...(requestInputTokens === undefined ? {} : { requestInputTokens }),
   };
   if (!dryRun) {
-    const result = await prepareExperienceReview({
-      ...options,
-      environment: runtime.environment ?? process.env,
-      ...(runtime.fetcher === undefined ? {} : { fetcher: runtime.fetcher }),
-      ...(runtime.analysisProcessRunner === undefined ? {} : { processRunner: runtime.analysisProcessRunner }),
-    });
+    const result = await withLiveStatus(runtime, globals, "Preparing experience extraction", (status) =>
+      prepareExperienceReview({
+        ...options,
+        environment: runtime.environment ?? process.env,
+        ...(runtime.fetcher === undefined ? {} : { fetcher: runtime.fetcher }),
+        ...(runtime.analysisProcessRunner === undefined ? {} : { processRunner: runtime.analysisProcessRunner }),
+        onProgress: (progress) => {
+          if (progress.phase === "indexing") status.update("Indexing selected history");
+          else if (progress.phase === "configuring") status.update("Loading model configuration");
+          else if (progress.phase === "extracting") {
+            status.update(`[${progress.currentBatch}/${progress.totalBatches}] Extracting evidence`);
+          } else if (progress.phase === "organizing") status.update("Organizing recurring candidates");
+          else if (progress.phase === "publishing") status.update("Writing experience review package");
+          else status.update("Finalizing experience extraction");
+        },
+      }));
     const consolidationTone = result.consolidation.status === "completed" || result.consolidation.status === "not_needed"
       ? "success"
       : "warning";
@@ -257,7 +269,8 @@ async function runReview(
         ], globals.color));
     return success("experience", experienceReviewResultJson(result), human, globals.json);
   }
-  const result = await dryRunExperienceReview(options);
+  const result = await withLiveStatus(runtime, globals, "Planning experience extraction", () =>
+    dryRunExperienceReview(options));
   const corpus = result.corpus;
   const plan = result.plan;
   const human = humanTitle("Experience extraction plan", globals.color) + "\n" + humanFields([

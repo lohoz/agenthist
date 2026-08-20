@@ -43,6 +43,7 @@ import {
   detectImportWizardLanguage,
   type ImportWizardLanguage,
 } from "./import-wizard/copy.js";
+import { withLiveStatus } from "./live-status.js";
 import { displayWidth, padDisplay, truncateDisplay } from "./terminal-layout.js";
 
 const AGENT_COLUMN_WIDTH = Math.max(...AGENTS.map((agent) => displayWidth(agentLabel(agent))));
@@ -166,13 +167,13 @@ export async function runExport(
     }
     throw invalidArguments(`unknown export flag: ${argument}`);
   }
-  const result = await exportHistory({
+  const result = await withLiveStatus(runtime, globals, "Exporting Agent history", () => exportHistory({
     stateDirectory: globals.stateDirectory,
     cwd: runtime.cwd ?? process.cwd(),
     sessions,
     ...(agents.size === 0 ? {} : { agents: [...agents] }),
     ...(output === undefined ? {} : { output }),
-  });
+  }));
   const skippedHuman = result.skippedSessions.length === 0
     ? ""
     : "\n" + colorizeHuman("Skipped sessions", "warning_strong", globals.color) + "\n" +
@@ -283,12 +284,13 @@ export async function runInspect(
     }
     throw invalidArguments(`unknown inspect flag: ${argument}`);
   }
-  const result = await inspectHistoryArchive(path.resolve(runtime.cwd ?? process.cwd(), file), {
-    sessions,
-    ...(agents.size === 0 ? {} : { agents: [...agents] }),
-    ...(limit === undefined ? {} : { limit }),
-    ...(cursor === undefined ? {} : { cursor }),
-  });
+  const result = await withLiveStatus(runtime, globals, "Inspecting history archive", () =>
+    inspectHistoryArchive(path.resolve(runtime.cwd ?? process.cwd(), file), {
+      sessions,
+      ...(agents.size === 0 ? {} : { agents: [...agents] }),
+      ...(limit === undefined ? {} : { limit }),
+      ...(cursor === undefined ? {} : { cursor }),
+    }));
   const entries = result.entries.map((entry) => ({
     session_ref: entry.sessionRef,
     agent: entry.agent,
@@ -551,7 +553,8 @@ export async function runImport(
     if (
       globals.json || runtime.input?.isTTY !== true || runtime.output?.isTTY !== true
     ) throw invalidArguments("interactive import requires a terminal; use --dry-run or --apply");
-    const catalog = await openImportCatalog(file, cwd);
+    const catalog = await withLiveStatus(runtime, globals, "Opening history archive", () =>
+      openImportCatalog(file, cwd));
     try {
       const outcome = await runImportWizard({
         catalog,
@@ -603,7 +606,12 @@ export async function runImport(
       await catalog.close();
     }
   } else {
-    result = await executeImport(mode);
+    result = await withLiveStatus(
+      runtime,
+      globals,
+      mode === "apply" ? "Importing Agent history" : "Planning history import",
+      () => executeImport(mode),
+    );
   }
   const data = {
     mode: result.mode,

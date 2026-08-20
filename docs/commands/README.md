@@ -57,6 +57,8 @@ agenthist --json history list
 
 `--json` uses the `agenthist.output/v1` envelope. Human-readable output may omit lengthy details; JSON retains the complete result.
 
+Long-running human commands may show one in-place status line on an interactive `stderr`. It is cleared before the final result, never enters `stdout`, and is disabled by `--json`.
+
 | Code | Meaning |
 | ---: | --- |
 | `0` | Command succeeded |

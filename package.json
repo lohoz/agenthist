@@ -1,6 +1,6 @@
 {
   "name": "agenthist",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Manage, migrate, convert, and extract recurring experience from local coding Agent history",
   "license": "MIT",
   "repository": {

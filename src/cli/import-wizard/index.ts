@@ -62,6 +62,7 @@ interface SessionSelectionOptions {
   readonly targetAgent?: Agent;
   readonly selectionMode?: "multiple" | "single";
   readonly preferredWorkspace?: string;
+  readonly languageSwitch?: boolean;
 }
 
 export interface HistorySelectionScreenOptions extends SessionSelectionOptions {
@@ -658,13 +659,14 @@ function sessionLabel(entry: ImportCatalogEntry, scope: ScopeRow): string {
 function renderSelectionScope(
   scope: ScopeRow,
   selected: ReadonlySet<string>,
+  single: boolean,
   focused: boolean,
   retained: boolean,
   width: number,
   color: boolean,
 ): string {
   const count = scope.entries.filter((entry) => selected.has(entry.sessionRef)).length;
-  const right = `${count}/${scope.entries.length}`;
+  const right = single ? `${scope.entries.length}` : `${count}/${scope.entries.length}`;
   const innerWidth = Math.max(1, width - 2);
   const label = scope.kind === "workspace"
     ? `  ${workspaceDisplay(scope, Math.max(1, columnLayout(right, innerWidth).leftWidth - 2))}`
@@ -686,6 +688,7 @@ function renderSelectionSession(
   scope: ScopeRow,
   explicit: ReadonlySet<string>,
   selected: ReadonlySet<string>,
+  single: boolean,
   focused: boolean,
   _retained: boolean,
   width: number,
@@ -694,10 +697,10 @@ function renderSelectionSession(
   const marker = explicit.has(entry.sessionRef) ? "✓" : selected.has(entry.sessionRef) ? "*" : " ";
   const markerRole = marker === "✓" ? "selected" : marker === "*" ? "info" : "plain";
   const content = styledColumns(
-    `[${marker}] ${sessionLabel(entry, scope)}`,
+    single ? sessionLabel(entry, scope) : `[${marker}] ${sessionLabel(entry, scope)}`,
     compactUpdated(entry.updatedAt),
     Math.max(1, width - 2),
-    markerRole,
+    single ? "plain" : markerRole,
     "muted",
     color,
   );
@@ -831,7 +834,10 @@ async function showPreview(
   const color = options.color === true;
   let copy = copyFor(terminal, provider);
   drawFrame(terminal, color, step, copy.preview.title, agentLabel(entry.agent),
-    [copy.preview.loading], [[], [["Esc", copy.actions.back], languageHint(terminal, provider)]], undefined, provider);
+    [copy.preview.loading], [[], [
+      ["Esc", copy.actions.back],
+      ...(options.languageSwitch === false ? [] : [languageHint(terminal, provider)]),
+    ]], undefined, provider);
   const preview: ImportSessionPreview = await options.catalog.preview(entry.sessionRef);
   let scroll = 0;
   while (true) {
@@ -878,14 +884,17 @@ async function showPreview(
       [[
         ["Up/Down", copy.actions.scroll],
         ["PgUp/PgDn", copy.actions.page],
-      ], [["Esc", copy.actions.back], languageHint(terminal, provider)]],
+      ], [
+        ["Esc", copy.actions.back],
+        ...(options.languageSwitch === false ? [] : [languageHint(terminal, provider)]),
+      ]],
       remaining === 0 ? undefined : copy.preview.remainingLines(remaining),
       provider,
     );
     const key = await terminal.key();
     if (interrupted(key)) return "cancel";
     if (key.name === "escape") return "back";
-    if (switchLanguage(terminal, key)) continue;
+    if (options.languageSwitch !== false && switchLanguage(terminal, key)) continue;
     if (key.name === "up" || key.name === "k") scroll = Math.max(0, scroll - 1);
     if (key.name === "down" || key.name === "j") scroll = Math.min(conversation.length - 1, scroll + 1);
     if (key.name === "pageup") scroll = Math.max(0, scroll - conversationCapacity);
@@ -933,20 +942,23 @@ async function selectSessionsScreen(
         [copy.selection.noMatches, "", copy.selection.searchStatus(state.query, copy.common.allSessions)],
         [[
           ["/", copy.actions.changeSearch],
-          ["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll],
+          ...(single ? [] : [["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll] as KeyHint]),
           ["Enter", copy.actions.next],
-        ], [["Esc", copy.actions.exit], languageHint(terminal, provider)]],
+        ], [
+          ["Esc", copy.actions.exit],
+          ...(options.languageSwitch === false ? [] : [languageHint(terminal, provider)]),
+        ]],
         notice,
         provider,
       );
       notice = undefined;
       const key = await terminal.key();
       if (interrupted(key) || key.name === "escape") return "cancel";
-      if (switchLanguage(terminal, key)) continue;
+      if (options.languageSwitch !== false && switchLanguage(terminal, key)) continue;
       if (key.name === "return" || key.name === "enter") {
         if (selected.length > 0) return "next";
         notice = copy.selection.selectRequired;
-      } else if (key.name === "a") {
+      } else if (!single && key.name === "a") {
         if (allSelected) state.explicit.clear();
         else for (const entry of allowed) state.explicit.add(entry.sessionRef);
       } else if (key.name === "/") {
@@ -986,22 +998,22 @@ async function selectSessionsScreen(
       scopeCursor,
       sessionCursor,
       (index, width, focused, retained) => renderSelectionScope(
-        scopes[index]!, selectedReferences, focused, retained, width, color),
+        scopes[index]!, selectedReferences, single, focused, retained, width, color),
       (index, width, focused, retained) => renderSelectionSession(
-        sessions[index]!, scope, state.explicit, selectedReferences, focused, retained, width, color),
+        sessions[index]!, scope, state.explicit, selectedReferences, single, focused, retained, width, color),
       scopeStatus(scope, copy, state.query),
     );
     const footer: FooterHints = [[
       ["Left/Right", copy.actions.switchPane],
       ["Up/Down", copy.actions.move],
-      ["Space", copy.actions.select],
+      ...(single ? [] : [["Space", copy.actions.select] as KeyHint]),
       ["Enter", copy.actions.next],
     ], [
       ["/", copy.actions.search],
       ...(single ? [] : [["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll] as KeyHint]),
       ...(activePane === "sessions" ? [["v", copy.actions.preview] as KeyHint] : []),
       ["Esc", copy.actions.exit],
-      languageHint(terminal, provider),
+      ...(options.languageSwitch === false ? [] : [languageHint(terminal, provider)]),
     ]];
     drawFrame(
       terminal,
@@ -1017,7 +1029,7 @@ async function selectSessionsScreen(
     notice = undefined;
     const key = await terminal.key();
     if (interrupted(key) || key.name === "escape") return "cancel";
-    if (switchLanguage(terminal, key)) continue;
+    if (options.languageSwitch !== false && switchLanguage(terminal, key)) continue;
     if (key.name === "return" || key.name === "enter") {
       if (single && activePane === "scopes") {
         activePane = "sessions";
@@ -1082,15 +1094,8 @@ async function selectSessionsScreen(
       }
     }
     if (key.name === "space") {
-      if (single) {
-        const entry = activePane === "scopes" ? scope.entries[0] : sessions[sessionCursor];
-        if (entry !== undefined) {
-          state.explicit.clear();
-          state.explicit.add(entry.sessionRef);
-        }
-      } else {
-        toggleEntries(state.explicit, activePane === "scopes" ? scope.entries : [sessions[sessionCursor]!]);
-      }
+      if (single) continue;
+      toggleEntries(state.explicit, activePane === "scopes" ? scope.entries : [sessions[sessionCursor]!]);
       continue;
     }
     if (key.name === "v") {

@@ -188,6 +188,10 @@ Some Agents expose conversations according to their workspace path. Keep the sou
 it is valid on the target machine. Otherwise map it to an existing target directory. Cross-platform
 POSIX and Windows transfers require explicit mapping because their path styles differ.
 
+Before resuming a conversation, make sure the selected target Agent CLI is installed and available
+on \`PATH\`. AgentHist checks this before writing a cross-Agent conversion. Repeating the same route
+for an unchanged captured revision reopens its existing target conversation.
+
 ## Transactions
 
 A successful native write creates a transaction record. \`recover\` completes an interrupted write;

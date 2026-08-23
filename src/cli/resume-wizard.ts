@@ -7,12 +7,24 @@ import {
   type HistoryCatalogEntry,
   type HistorySelectionCatalog,
   type ImportHistoryResult,
+  type ExistingHistoryTransfer,
 } from "../application/index.js";
 import { isAbsolutePath, pathFlavorForPlatform } from "../domain/host-path.js";
+import {
+  readDirectoryInput,
+  type DirectoryInputFrame,
+  type DirectoryInputView,
+} from "./import-wizard/directory-input.js";
 import { chooseHistorySessions } from "./import-wizard/index.js";
 import { ImportTerminal, type TerminalKey } from "./import-wizard/terminal.js";
+import { resumeWizardCopy } from "./resume-copy.js";
 import { paint } from "./style.js";
-import { columns, truncateDisplay, wrapDisplay } from "./terminal-layout.js";
+import {
+  columns,
+  truncateDisplay,
+  truncateDisplayStart,
+  wrapDisplay,
+} from "./terminal-layout.js";
 
 export interface ResumeWizardRequest {
   readonly session: HistoryCatalogEntry;
@@ -28,6 +40,8 @@ export interface ResumeWizardOptions {
   readonly color?: boolean;
   readonly sessionRef?: string;
   readonly targetAgent?: Agent;
+  ensureTargetAvailable(request: ResumeWizardRequest, cwd: string): Promise<void>;
+  findExistingTarget(request: ResumeWizardRequest): Promise<ExistingHistoryTransfer | undefined>;
   execute(mode: "dry_run" | "apply", request: ResumeWizardRequest): Promise<ImportHistoryResult>;
 }
 
@@ -39,6 +53,8 @@ export type ResumeWizardOutcome =
       readonly session: HistoryCatalogEntry;
       readonly targetAgent: Agent;
       readonly cwd: string;
+      readonly targetNativeId?: string;
+      readonly reusedExisting?: boolean;
       readonly result?: ImportHistoryResult;
     };
 
@@ -107,6 +123,49 @@ async function realDirectory(candidate: string): Promise<boolean> {
   }
 }
 
+function directoryInputFrame(
+  terminal: ImportTerminal,
+  source: string,
+  color: boolean,
+  view: DirectoryInputView,
+): DirectoryInputFrame {
+  const width = terminal.width;
+  const sourceLines = wrapDisplay(`Source workspace: ${source}`, width);
+  const header = [
+    paint("AgentHist Resume", "brand", color),
+    "",
+    paint("Workspace moved", "heading", color),
+    "",
+    ...sourceLines,
+    "",
+  ];
+  const cursorLine = header.length;
+  const feedback = view.invalid
+    ? "Choose an existing directory."
+    : "Up/Down chooses · Enter fills choice or confirms · Tab completes · Ctrl+U clears · Esc goes back";
+  const available = Math.max(1, terminal.height - header.length - 5);
+  const maximumStart = Math.max(0, view.candidates.length - available);
+  const start = Math.min(maximumStart, Math.max(0, view.activeCandidate - Math.floor(available / 2)));
+  const candidates = view.candidates.slice(start, start + available);
+  return {
+    lines: [
+      ...header,
+      `Target directory: ${truncateDisplayStart(view.value, Math.max(8, width - 18))}`,
+      "",
+      paint("Directory candidates", "section", color),
+      ...(candidates.length === 0
+        ? [paint("  No matching directories", "muted", color)]
+        : candidates.map((candidate, index) => {
+            const active = view.candidateSelected && start + index === view.activeCandidate;
+            const line = `${active ? ">" : " "} ${truncateDisplayStart(candidate, Math.max(1, width - 2))}`;
+            return active ? paint(line, "focus", color) : line;
+          })),
+      paint(feedback, view.invalid ? "warning" : "muted", color),
+    ],
+    cursorLine,
+  };
+}
+
 async function workspaceMappings(
   terminal: ImportTerminal,
   session: HistoryCatalogEntry,
@@ -114,32 +173,14 @@ async function workspaceMappings(
   color: boolean,
 ): Promise<readonly string[] | undefined> {
   if (await realDirectory(session.workspace)) return [];
-  let initial = cwd;
-  while (true) {
-    const value = await terminal.line((input) => [
-      paint("AgentHist Resume", "brand", color),
-      "",
-      paint("Workspace moved", "heading", color),
-      "",
-      ...wrapDisplay(`Source: ${session.workspace}`, terminal.width),
-      "",
-      "Enter the existing directory where this conversation should continue:",
-      "",
-      `Target: ${input}`,
-      "",
-      "[Enter] Use directory   [Esc] Back",
-    ], initial);
-    if (value === undefined) return undefined;
-    if (!isAbsolutePath(value, pathFlavorForPlatform())) {
-      initial = value;
-      continue;
-    }
-    if (!await realDirectory(value)) {
-      initial = value;
-      continue;
-    }
-    return [`${session.workspace}=${value}`];
-  }
+  const value = await readDirectoryInput(terminal, {
+    initial: cwd,
+    seeds: [cwd],
+    render: (view) => directoryInputFrame(terminal, session.workspace, color, view),
+  });
+  if (value === undefined) return undefined;
+  if (!isAbsolutePath(value, pathFlavorForPlatform())) return undefined;
+  return [`${session.workspace}=${value}`];
 }
 
 function reviewLines(
@@ -203,7 +244,9 @@ export async function runResumeWizard(options: ResumeWizardOptions): Promise<Res
         sessions: [],
         selectionMode: "single",
         preferredWorkspace: options.cwd,
+        languageSwitch: false,
         color,
+        copy: resumeWizardCopy,
         step: 0,
       });
       if (selected.status === "cancelled") return { status: "cancelled" };
@@ -219,10 +262,32 @@ export async function runResumeWizard(options: ResumeWizardOptions): Promise<Res
     const targetCwd = pathMappings.length === 0
       ? session.workspace
       : pathMappings[0]!.slice(pathMappings[0]!.indexOf("=") + 1);
+    const request = { session, targetAgent, pathMappings };
+    frame(
+      terminal,
+      color,
+      "Continue conversation",
+      "CHECKING",
+      [`Checking ${agentLabel(targetAgent)} CLI...`],
+      "",
+    );
+    await options.ensureTargetAvailable(request, targetCwd);
     if (targetAgent === session.agent) return { status: "ready", session, targetAgent, cwd: targetCwd };
 
+    frame(terminal, color, "Continue conversation", "CHECKING", ["Looking for an existing continuation..."], "");
+    const existing = await options.findExistingTarget(request);
+    if (existing !== undefined) {
+      return {
+        status: "ready",
+        session,
+        targetAgent,
+        cwd: targetCwd,
+        targetNativeId: existing.targetNativeId,
+        reusedExisting: true,
+      };
+    }
+
     frame(terminal, color, "Review conversion", "PREPARING", ["Checking portable history..."], "");
-    const request = { session, targetAgent, pathMappings };
     const dryRun = await options.execute("dry_run", request);
     if (!await confirmTransfer(terminal, dryRun, session, targetAgent, color)) {
       return dryRun.status === "blocked" ? { status: "blocked" } : { status: "cancelled" };

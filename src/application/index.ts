@@ -139,8 +139,12 @@ export type {
   ImportWorkspaceStatus,
 } from "./history-import.js";
 
-export { transferHistorySession } from "./local-transfer.js";
-export type { TransferHistorySessionOptions } from "./local-transfer.js";
+export { findExistingHistoryTransfer, transferHistorySession } from "./local-transfer.js";
+export type {
+  ExistingHistoryTransfer,
+  FindExistingHistoryTransferOptions,
+  TransferHistorySessionOptions,
+} from "./local-transfer.js";
 export { prepareResumeLaunch } from "./resume.js";
 export type { ResumeLaunchOptions } from "./resume.js";
 

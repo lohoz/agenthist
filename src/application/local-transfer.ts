@@ -1,5 +1,14 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import type { Agent } from "../domain/agent.js";
+import type { ConversionFinding, ConversionStatus } from "../domain/conversion.js";
+import { sessionAgent } from "../domain/history.js";
 import { pathFlavorForPlatform } from "../domain/host-path.js";
+import { loadSnapshot } from "../infrastructure/history-store.js";
+import { withStateReadLock } from "../infrastructure/state.js";
+import { prepareImportConversions } from "./conversion.js";
 import { importPreparedHistory, type ImportHistoryResult } from "./history-import.js";
 import { withPreparedHistorySource } from "./transfer.js";
 
@@ -20,6 +29,75 @@ export interface TransferHistorySessionOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd?: string;
   readonly home?: string;
+}
+
+export interface ExistingHistoryTransfer {
+  readonly sourceSessionRef: string;
+  readonly targetAgent: Agent;
+  readonly targetSessionRef: string;
+  readonly targetNativeId: string;
+  readonly quality: Exclude<ConversionStatus, "blocked">;
+  readonly findings: readonly ConversionFinding[];
+}
+
+export type FindExistingHistoryTransferOptions = Omit<TransferHistorySessionOptions, "mode">;
+
+function objectIdAllocator(existing: ReadonlySet<string>): () => string {
+  let next = 0;
+  return () => {
+    while (true) {
+      next++;
+      if (next > 999_999) throw new Error("local transfer exceeds the object identity limit");
+      const id = `o${next.toString().padStart(6, "0")}`;
+      if (!existing.has(id)) return id;
+    }
+  };
+}
+
+export async function findExistingHistoryTransfer(
+  options: FindExistingHistoryTransferOptions,
+): Promise<ExistingHistoryTransfer | undefined> {
+  if (sessionAgent(options.sessionRef) === options.targetAgent) return undefined;
+  const targetSnapshot = await withStateReadLock(
+    options.stateDirectory,
+    () => loadSnapshot(options.stateDirectory, options.targetAgent),
+  );
+  if (targetSnapshot === undefined) return undefined;
+  return withPreparedHistorySource({
+    stateDirectory: options.stateDirectory,
+    sessions: [options.sessionRef],
+    strictSessions: true,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+  }, async (source) => {
+    const objects = new Map(source.sources.map((object) => [object.id, object.filePath]));
+    if (objects.size !== source.sources.length) throw new Error("prepared history source has duplicate objects");
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-local-transfer-plan-"));
+    try {
+      const destinations = new Map(source.entries.map((entry) => [entry.sessionRef, options.targetAgent]));
+      const conversions = await prepareImportConversions({
+        entries: source.entries,
+        objects,
+        destinations,
+        workspace,
+        pathFlavor: pathFlavorForPlatform(),
+        allocateObjectId: objectIdAllocator(new Set(objects.keys())),
+      });
+      const planned = conversions.items.find((item) => item.sourceSessionRef === options.sessionRef);
+      if (planned === undefined || planned.status === "blocked" || planned.targetSessionRef === "") return undefined;
+      const existing = targetSnapshot.sessions.find((session) => session.sessionRef === planned.targetSessionRef);
+      if (existing === undefined) return undefined;
+      return {
+        sourceSessionRef: options.sessionRef,
+        targetAgent: options.targetAgent,
+        targetSessionRef: planned.targetSessionRef,
+        targetNativeId: existing.nativeId,
+        quality: planned.status,
+        findings: planned.findings,
+      };
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
 }
 
 export async function transferHistorySession(

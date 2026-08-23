@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import {
   agentLabel,
   detectHistorySources,
+  findExistingHistoryTransfer,
   openHistoryCatalog,
   prepareResumeLaunch,
   scanHistory,
@@ -11,8 +12,12 @@ import {
   type HistoryCatalogEntry,
   type HistorySelectionCatalog,
 } from "../application/index.js";
+import { sessionAgent } from "../domain/history.js";
 import { pathFlavorForPlatform, samePath } from "../domain/host-path.js";
-import { runAgentProcess } from "../infrastructure/agent-process.js";
+import {
+  ensureAgentProcessAvailable,
+  runAgentProcess,
+} from "../infrastructure/agent-process.js";
 import {
   colorizeHuman,
   invalidArguments,
@@ -115,8 +120,12 @@ function transferOptions(
   };
 }
 
-async function refreshDetectedHistory(globals: GlobalOptions, runtime: CliRuntime): Promise<void> {
-  const sources = historySourceOptions(globals, runtime);
+async function refreshDetectedHistory(
+  globals: GlobalOptions,
+  runtime: CliRuntime,
+  requestedAgents?: readonly Agent[],
+): Promise<void> {
+  const sources = historySourceOptions(globals, runtime, requestedAgents);
   const detected = await detectHistorySources(sources);
   const agents = detected.agents.filter((item) => item.status === "ready").map((item) => item.agent);
   if (agents.length === 0) return;
@@ -133,9 +142,19 @@ export async function runResume(
     throw invalidArguments("resume requires an interactive terminal");
   }
   const flags = parseResumeFlags(args);
-  await withLiveStatus(runtime, globals, "Refreshing Agent history", async (status) => {
-    status.update("Refreshing detected Agent history");
-    await refreshDetectedHistory(globals, runtime);
+  const sourceAgent = flags.sessionRef === undefined ? undefined : sessionAgent(flags.sessionRef);
+  if (flags.sessionRef !== undefined && sourceAgent === undefined) {
+    throw invalidArguments(`invalid AgentHist session reference: ${flags.sessionRef}`);
+  }
+  const refreshAgents = sourceAgent === undefined
+    ? undefined
+    : [...new Set([sourceAgent, flags.targetAgent].filter((agent): agent is Agent => agent !== undefined))];
+  const refreshLabel = refreshAgents === undefined
+    ? "Agent history"
+    : refreshAgents.length === 1 ? `${agentLabel(refreshAgents[0]!)} history` : "selected Agent history";
+  await withLiveStatus(runtime, globals, `Refreshing ${refreshLabel}`, async (status) => {
+    status.update(`Refreshing detected ${refreshLabel}`);
+    await refreshDetectedHistory(globals, runtime, refreshAgents);
   });
   const completeCatalog = await openHistoryCatalog(globals.stateDirectory);
   const catalog = flags.sessionRef === undefined ? activeCatalog(completeCatalog) : completeCatalog;
@@ -149,6 +168,18 @@ export async function runResume(
     ...(sessionRef === undefined ? {} : { sessionRef }),
     ...(flags.targetAgent === undefined ? {} : { targetAgent: flags.targetAgent }),
     color: globals.color,
+    ensureTargetAvailable: async (request, targetCwd) => {
+      const launch = prepareResumeLaunch({
+        agent: request.targetAgent,
+        nativeId: request.session.nativeId,
+        cwd: targetCwd,
+      });
+      const checker = runtime.agentProcessAvailabilityChecker ?? ensureAgentProcessAvailable;
+      await checker(launch, runtime.environment ?? process.env);
+    },
+    findExistingTarget: (request) => findExistingHistoryTransfer(
+      transferOptions(globals, runtime, request, "dry_run"),
+    ),
     execute: (mode, request) => transferHistorySession(transferOptions(globals, runtime, request, mode)),
   });
   if (outcome.status === "cancelled") {
@@ -169,7 +200,7 @@ export async function runResume(
   if (outcome.result !== undefined && imported === undefined) {
     throw new Error("resume import did not return the selected target session");
   }
-  const nativeId = imported?.targetNativeId ?? outcome.session.nativeId;
+  const nativeId = outcome.targetNativeId ?? imported?.targetNativeId ?? outcome.session.nativeId;
   const launchCwd = imported?.cwd ?? outcome.cwd;
   const launch = prepareResumeLaunch({ agent: outcome.targetAgent, nativeId, cwd: launchCwd });
   runtime.output.write(
@@ -198,6 +229,7 @@ export async function runResume(
       source_session_ref: outcome.session.sessionRef,
       native_id: nativeId,
       cwd: launchCwd,
+      reused_existing: outcome.reusedExisting === true,
       agent_exit_code: processResult.exitCode,
       refreshed: refreshWarning === undefined,
     },

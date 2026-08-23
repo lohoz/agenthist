@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { claudeProjectCarrier } from "../../../src/agents/claude/project.js";
-import { openImportCatalog } from "../../../src/application/index.js";
+import {
+  findExistingHistoryTransfer,
+  openHistoryCatalog,
+  openImportCatalog,
+  transferHistorySession,
+} from "../../../src/application/index.js";
 import { runCli } from "../../../src/cli/program.js";
 import { nativeFixturePath } from "../../support/native-path.js";
 
@@ -342,6 +347,82 @@ test("one archive preflights and imports multiple Agents in product order", asyn
     const claudeFiles = await readFile(claudeDestination, "utf8");
     assert.match(claudeFiles, /Claude batch answer/);
     assert.deepEqual(await readFile(path.join(targetCodex, "config.toml")), codexConfigBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("local cross-Agent continuation reuses its stable target after the target history grows", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-local-transfer-repeat-"));
+  const runtime = { environment: { HOME: root }, cwd: root, home: root };
+  const state = path.join(root, "state");
+  const sourceCodex = path.join(root, "source-codex");
+  const sourceSQLite = path.join(root, "source-sqlite");
+  const targetClaude = path.join(root, "target-claude");
+  const targetWork = path.join(root, "target-work");
+  try {
+    await createCodexSource(sourceCodex, sourceSQLite);
+    await mkdir(targetClaude, { recursive: true });
+    await mkdir(targetWork, { recursive: true });
+    const scanned = await runCli([
+      "--json", "--state-dir", state,
+      "--codex-home", sourceCodex, "--codex-sqlite-home", sourceSQLite,
+      "scan", "--agent", "codex",
+    ], runtime);
+    assert.equal(scanned.exitCode, 0, scanned.stderr);
+    const catalog = await openHistoryCatalog(state, ["codex"]);
+    const source = catalog.entries[0]!;
+    const options = {
+      stateDirectory: state,
+      sessionRef: source.sessionRef,
+      targetAgent: "claude" as const,
+      claudeConfigRoot: targetClaude,
+      pathMappings: [`${CODEX_WORKSPACE}=${targetWork}`],
+      environment: runtime.environment,
+      cwd: root,
+      home: root,
+    };
+
+    const first = await transferHistorySession({ ...options, mode: "apply" });
+    assert.equal(first.written, 1);
+    assert.equal(first.alreadyPresent, 0);
+    assert.equal(first.items[0]!.classification, "new");
+    const target = first.items[0]!;
+
+    const unchanged = await transferHistorySession({ ...options, mode: "apply" });
+    assert.equal(unchanged.written, 0);
+    assert.equal(unchanged.alreadyPresent, 1);
+    assert.equal(unchanged.items[0]!.classification, "already_present");
+    assert.equal(unchanged.items[0]!.targetNativeId, target.targetNativeId);
+    assert.equal(unchanged.agents[0]!.transactionRef, undefined);
+
+    const records = (await readFile(target.destination, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const parentUuid = [...records].reverse().find((record) => typeof record.uuid === "string")?.uuid;
+    assert.equal(typeof parentUuid, "string");
+    await appendFile(target.destination, `${JSON.stringify({
+      parentUuid,
+      isSidechain: false,
+      type: "user",
+      message: { role: "user", content: "Continue after the AgentHist conversion" },
+      uuid: "aaaaaaaa-1111-4111-8111-111111111111",
+      timestamp: "2026-08-09T05:00:03.000Z",
+      cwd: targetWork,
+      sessionId: target.targetNativeId,
+      version: "continued-target-fixture",
+    })}\n`);
+    const targetScan = await runCli([
+      "--json", "--state-dir", state, "--claude-config-dir", targetClaude,
+      "scan", "--agent", "claude",
+    ], runtime);
+    assert.equal(targetScan.exitCode, 0, targetScan.stderr);
+
+    const existing = await findExistingHistoryTransfer(options);
+    assert.notEqual(existing, undefined);
+    assert.equal(existing!.targetNativeId, target.targetNativeId);
+    assert.equal(existing!.targetSessionRef, target.targetSessionRef);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

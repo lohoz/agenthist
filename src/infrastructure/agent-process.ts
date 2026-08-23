@@ -1,6 +1,7 @@
 import spawn from "cross-spawn";
 
 import type { AgentLaunchSpec } from "../agents/contracts.js";
+import { resolveExecutable } from "./executable.js";
 
 export interface AgentProcessResult {
   readonly exitCode: number;
@@ -11,6 +12,21 @@ export type AgentProcessRunner = (
   spec: AgentLaunchSpec,
   environment?: NodeJS.ProcessEnv,
 ) => Promise<AgentProcessResult>;
+
+export type AgentProcessAvailabilityChecker = (
+  spec: AgentLaunchSpec,
+  environment?: NodeJS.ProcessEnv,
+) => Promise<void>;
+
+export const ensureAgentProcessAvailable: AgentProcessAvailabilityChecker = async (spec, environment) => {
+  const executable = await resolveExecutable(spec.command, {
+    cwd: spec.cwd,
+    environment: environment ?? process.env,
+  });
+  if (executable === undefined) {
+    throw new Error(`${spec.command} is not installed or is not available on PATH`);
+  }
+};
 
 export const runAgentProcess: AgentProcessRunner = async (spec, environment) => {
   return await new Promise<AgentProcessResult>((resolve, reject) => {

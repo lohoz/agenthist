@@ -5,6 +5,7 @@ Browse, search, and organize scanned sessions.
 ## Usage
 
 ```text
+agenthist history
 agenthist history list [--agent <agent>]... [--view <active|archived|deleted|all>]
                        [--offset <count>] [--limit <count>]
 agenthist history search <query> [--agent <agent>]... [--view <view>]
@@ -14,6 +15,12 @@ agenthist history rename <session-ref> --name <name>
 agenthist history tag <session-ref> (--add <tag>|--remove <tag>)...
 agenthist history archive|unarchive|delete|undelete <session-ref>
 ```
+
+Running `agenthist history` in a terminal refreshes detected Agent history and opens a browser.
+Choose one conversation to preview, continue, rename, tag, archive, or delete it. These organizing
+actions change only AgentHist's library overlay.
+
+The explicit subcommands below remain non-interactive and read the current scanned snapshot.
 
 ## Browse and search
 

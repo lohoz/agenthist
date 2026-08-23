@@ -54,6 +54,6 @@ AgentHist does not collect Agent connection settings or credentials. Text that a
 
 ## Which commands write to native Agent history?
 
-`import --apply` and `codex provider unify --apply` write native history and create transactions.
+`import --apply`, cross-Agent `resume`, and `codex provider unify --apply` write native history and create transactions.
 
 `doctor`, `scan`, `history`, `export`, `inspect`, and dry runs do not write native Agent history.

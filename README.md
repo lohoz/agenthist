@@ -83,7 +83,13 @@ Check local history locations before the first scan:
 agenthist doctor
 ```
 
-Then scan, browse, and search:
+Refresh and browse interactively:
+
+```bash
+agenthist history # Refresh and browse local Agent history
+```
+
+The explicit commands remain available for scripts and exact operations:
 
 ```bash
 agenthist scan
@@ -110,11 +116,16 @@ The current workspace is shown first. Choosing the source Agent opens its native
 
 ## 🔄 Migration and conversion
 
-Update the history library and export it on the source machine:
+Export on the source machine:
+
+```bash
+agenthist export # Refresh history and open interactive selection
+```
+
+For a direct export, update the scanned snapshot first:
 
 ```bash
 agenthist scan
-agenthist export # Open interactive selection
 agenthist export --all -o backup.agenthist # Export all history
 ```
 

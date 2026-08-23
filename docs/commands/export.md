@@ -24,7 +24,9 @@ agenthist export --session <session-ref-1> --session <session-ref-2> -o selected
 
 `--all` cannot be combined with a filter. Bulk export includes every safely migratable matching session and clearly lists anything skipped. An explicit `--session` selection is strict and fails if that session cannot be exported.
 
-In a terminal, running the command without options opens the selection interface. `--language en|zh` selects its initial language. Scripts, non-TTY environments, and `--json` use direct export.
+In a terminal, running the command without options incrementally refreshes detected Agent history,
+then opens the selection interface. `--language en|zh` selects its initial language. Scripts,
+non-TTY environments, and `--json` use the current scanned snapshot for direct export.
 
 When the output path is omitted, AgentHist creates a timestamped filename in the current directory. Existing files are never overwritten.
 

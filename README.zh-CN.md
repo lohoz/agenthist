@@ -83,7 +83,13 @@ agenthist skill install
 agenthist doctor
 ```
 
-扫描完成后即可查看和搜索：
+增量刷新并进入交互浏览：
+
+```bash
+agenthist history # 刷新并浏览本机 Agent 历史
+```
+
+脚本和精确操作仍可使用原有命令：
 
 ```bash
 agenthist scan
@@ -110,11 +116,16 @@ agenthist resume --last --agent claude
 
 ## 🔄 迁移与转换
 
-在源机器上更新历史库并导出：
+在源机器上导出：
+
+```bash
+agenthist export # 刷新历史并进入交互选择
+```
+
+直接导出时，先更新扫描快照：
 
 ```bash
 agenthist scan
-agenthist export # 进入交互选择
 agenthist export --all -o backup.agenthist # 导出全部历史
 ```
 

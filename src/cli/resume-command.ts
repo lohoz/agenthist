@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 
 import {
+  AGENTS,
   agentLabel,
-  detectHistorySources,
   findExistingHistoryTransfer,
   openHistoryCatalog,
   prepareResumeLaunch,
@@ -29,6 +29,7 @@ import {
   type GlobalOptions,
 } from "./command-support.js";
 import { humanFields, humanTitle } from "./human-output.js";
+import { refreshDetectedHistory } from "./history-refresh.js";
 import { withLiveStatus } from "./live-status.js";
 import { runResumeWizard, type ResumeWizardRequest } from "./resume-wizard.js";
 import { historySourceOptions } from "./source-options.js";
@@ -120,18 +121,6 @@ function transferOptions(
   };
 }
 
-async function refreshDetectedHistory(
-  globals: GlobalOptions,
-  runtime: CliRuntime,
-  requestedAgents?: readonly Agent[],
-): Promise<void> {
-  const sources = historySourceOptions(globals, runtime, requestedAgents);
-  const detected = await detectHistorySources(sources);
-  const agents = detected.agents.filter((item) => item.status === "ready").map((item) => item.agent);
-  if (agents.length === 0) return;
-  await scanHistory({ ...sources, agents, stateDirectory: globals.stateDirectory });
-}
-
 export async function runResume(
   globals: GlobalOptions,
   args: readonly string[],
@@ -154,7 +143,7 @@ export async function runResume(
     : refreshAgents.length === 1 ? `${agentLabel(refreshAgents[0]!)} history` : "selected Agent history";
   await withLiveStatus(runtime, globals, `Refreshing ${refreshLabel}`, async (status) => {
     status.update(`Refreshing detected ${refreshLabel}`);
-    await refreshDetectedHistory(globals, runtime, refreshAgents);
+    await refreshDetectedHistory(globals, runtime, refreshAgents ?? AGENTS);
   });
   const completeCatalog = await openHistoryCatalog(globals.stateDirectory);
   const catalog = flags.sessionRef === undefined ? activeCatalog(completeCatalog) : completeCatalog;

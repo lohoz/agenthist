@@ -2392,7 +2392,7 @@ export async function runImportWizard(options: ImportWizardOptions): Promise<Imp
   const allowed = options.agents === undefined
     ? options.catalog.entries
     : options.catalog.entries.filter((entry) => options.agents!.includes(entry.agent));
-  if (allowed.length === 0) throw new Error("archive has no history for the selected Agent");
+  if (allowed.length === 0) throw new Error("AgentHist file has no history for the selected Agent");
   const byReference = new Map(allowed.map((entry) => [entry.sessionRef, entry]));
   const initialReferences = options.sessions.length === 0 ? allowed.map((entry) => entry.sessionRef) : options.sessions;
   const missing = initialReferences.find((reference) => !byReference.has(reference));

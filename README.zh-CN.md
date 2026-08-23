@@ -142,8 +142,10 @@ agenthist export --session <session-ref> -o selected.agenthist
 把文件复制到目标机器后运行：
 
 ```bash
-agenthist inspect backup.agenthist # 查看归档内容
-agenthist import backup.agenthist # 进入交互导入
+agenthist inspect                  # 选择并查看 AgentHist 文件
+agenthist inspect backup.agenthist # 查看指定文件
+agenthist import                   # 选择文件并进入交互导入
+agenthist import backup.agenthist  # 导入指定文件
 ```
 
 默认选择全部会话，并恢复到各自的来源 Agent。

@@ -107,29 +107,31 @@ and confirming history after an incremental refresh. --all bypasses the guide. S
 Existing output files are never overwritten.
 `,
   inspect: `Usage:
-  agenthist inspect <file.agenthist> [--agent <agent>]... [--session <session-ref>]...
+  agenthist inspect [file.agenthist] [--agent <agent>]... [--session <session-ref>]...
                     [--limit <count>] [--cursor <cursor>]
 
-Deeply validate an archive and show a bounded entry list without importing it.
+Deeply validate an AgentHist file and show a bounded entry list without importing it.
+In a terminal, omit the file to choose a .agenthist file from the current directory.
 Each row identifies the source Agent. The workspace summary lists every source path so
-cross-machine mappings can be prepared without opening native archive metadata.
+cross-machine mappings can be prepared without opening native file metadata.
 Filters and pagination affect presentation only; validation still covers the whole file.
 The default limit is 50 and the maximum is 200.
 `,
   import: `Usage:
-  agenthist import <file.agenthist> [--dry-run|--apply]
+  agenthist import [file.agenthist] [--dry-run|--apply]
                    [--agent <agent>]... [--session <session-ref>]...
                    [--to <agent>]
                    [--target <agent>=<path>]... [--map-path <source>=<target>]...
                    [--codex-provider <current|preserve|provider-id>]
                    [--language <en|zh>]
 
-Import every archive entry by default. --agent selects source Agents and --session selects
+Import every file entry by default. --agent selects source Agents and --session selects
 exact source session references. Without --to, each session returns to its source Agent;
 with --to, every selected session is restored or projected to that Agent. In a terminal,
-omitting --dry-run and --apply opens the import guide for browsing, previewing, selecting,
+omit the file to choose a .agenthist file from the current directory. Omitting --dry-run
+and --apply opens the import guide for browsing, previewing, selecting,
 mapping, planning, and one final confirmation. --dry-run plans without writing and --apply
-executes after the same full preflight; scripts and --json must choose one explicitly.
+executes after the same full preflight; scripts and --json require an explicit file and mode.
 The interactive guide follows the terminal locale, can switch languages with l, and accepts
 --language for an explicit English or Chinese start. Non-interactive output remains English.
 Repeated identical imports do not create duplicate conversations. Codex history binds to

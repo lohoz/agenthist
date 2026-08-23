@@ -65,8 +65,8 @@ The Skill is installed for every supported Agent by default. Repeat `--agent` to
 | [`scan`](docs/commands/scan.md) | Update the AgentHist history library |
 | [`history`](docs/commands/history.md) | Browse, search, and organize sessions |
 | [`resume`](docs/commands/resume.md) | Continue a conversation with any supported Agent |
-| [`export`](docs/commands/export.md) | Create a `.agenthist` archive |
-| [`inspect`](docs/commands/inspect.md) | Inspect an exported archive |
+| [`export`](docs/commands/export.md) | Create a `.agenthist` file |
+| [`inspect`](docs/commands/inspect.md) | Inspect an exported file |
 | [`import`](docs/commands/import.md) | Restore sessions or convert them to another Agent |
 | [`experience`](docs/commands/experience.md) | Extract recurring experience from history |
 | [`skill`](docs/commands/skill.md) | Install or remove the AgentHist Skill |
@@ -142,8 +142,10 @@ agenthist export --session <session-ref> -o selected.agenthist
 After moving the file to the target machine, run:
 
 ```bash
-agenthist inspect backup.agenthist # Inspect the archive
-agenthist import backup.agenthist # Open interactive import
+agenthist inspect                  # Choose and inspect an AgentHist file
+agenthist inspect backup.agenthist # Inspect a specific file
+agenthist import                   # Choose a file and open interactive import
+agenthist import backup.agenthist  # Open a specific file
 ```
 
 All sessions are selected by default and routed back to their source Agents.
@@ -239,7 +241,7 @@ Repeated runs reuse the local evidence index and cached model results for unchan
 
 ## Notes
 
-- `.agenthist` archives contain chat content and related history data. Handle them as carefully as the original conversations.
+- `.agenthist` files contain chat content and related history data. Handle them as carefully as the original conversations.
 - AgentHist handles history records only. It does not migrate Base URLs, API keys, tokens, OAuth data, or other connection settings.
 - Run `agenthist help <command>` for help in the terminal.
 

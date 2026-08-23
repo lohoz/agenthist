@@ -52,7 +52,7 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
   const importHelp = await runCli(["help", "import"]);
   assert.equal(importHelp.exitCode, 0);
   assert.match(importHelp.stdout, /^Usage:\n  agenthist import/m);
-  assert.match(importHelp.stdout, /every archive entry by default/i);
+  assert.match(importHelp.stdout, /every file entry by default/i);
   assert.match(importHelp.stdout, /do not create duplicate conversations/i);
   assert.match(importHelp.stdout, /workspace paths remain unchanged/i);
   assert.match(importHelp.stdout, /--to <agent>/i);
@@ -60,7 +60,7 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
   assert.match(importHelp.stdout, /opens the import guide/i);
   assert.match(importHelp.stdout, /--language <en\|zh>/i);
   assert.match(importHelp.stdout, /Non-interactive output remains English/i);
-  assert.match(importHelp.stdout, /scripts and --json must choose one explicitly/i);
+  assert.match(importHelp.stdout, /scripts and --json require an explicit file and mode/i);
   assert.match(importHelp.stdout, /Every selected Agent's\s+final workspace must exist/i);
   assert.doesNotMatch(importHelp.stdout, /credential|\.ahb/i);
 
@@ -224,6 +224,14 @@ test("version, doctor, malformed journals, and unsupported commands have stable 
   const nonInteractiveImport = await runCli(["import", "fixture.agenthist"]);
   assert.equal(nonInteractiveImport.exitCode, 2);
   assert.match(nonInteractiveImport.stderr, /interactive import requires a terminal; use --dry-run or --apply/);
+
+  const missingImportArchive = await runCli(["import"]);
+  assert.equal(missingImportArchive.exitCode, 2);
+  assert.match(missingImportArchive.stderr, /import requires one \.agenthist file/);
+
+  const missingInspectArchive = await runCli(["inspect"]);
+  assert.equal(missingInspectArchive.exitCode, 2);
+  assert.match(missingInspectArchive.stderr, /inspect requires one \.agenthist file/);
 
   const nonInteractiveHistory = await runCli(["history"]);
   assert.equal(nonInteractiveHistory.exitCode, 2);

@@ -32,6 +32,7 @@ import {
   type CliRuntime,
   type GlobalOptions,
 } from "./command-support.js";
+import { selectArchiveFile } from "./archive-picker.js";
 import {
   humanBytes,
   humanCount,
@@ -132,7 +133,7 @@ function renderImportHuman(file: string, result: ImportHistoryResult, color: boo
     : "";
   return humanTitle(heading, color) + "\n" + humanFields([
     { label: "Status", value: statusLabel, tone: statusTone },
-    { label: "Archive", value: file },
+    { label: "File", value: file },
     { label: "Selected", value: String(result.selectedSessions) },
     { label: result.mode === "apply" ? "Imported" : "New", value: String(result.mode === "apply" ? result.written : result.newSessions) },
     { label: "Already present", value: String(result.alreadyPresent) },
@@ -235,7 +236,7 @@ export async function runExport(
         "export",
         { status: "cancelled", entries: 0 },
         `${colorizeHuman("Export cancelled.", "warning", globals.color)}\n` +
-          `${colorizeHuman("No archive written.", "muted", globals.color)}\n`,
+          `${colorizeHuman("No file written.", "muted", globals.color)}\n`,
         false,
       );
     }
@@ -299,7 +300,7 @@ export async function runExport(
       resources: result.resources,
     },
     partialWarning + humanTitle("History exported", globals.color) + "\n" + humanFields([
-      { label: "Archive", value: result.file, tone: "success" },
+      { label: "File", value: result.file, tone: "success" },
       { label: "Sessions", value: String(result.entries) },
       {
         label: "Skipped",
@@ -324,14 +325,19 @@ export async function runInspect(
   args: readonly string[],
   runtime: CliRuntime,
 ): Promise<CliResult> {
-  const file = args[0];
-  if (file === undefined || file.startsWith("--")) throw invalidArguments("inspect requires one .agenthist file");
+  let requestedFile: string | undefined;
   const agents = new Set<Agent>();
   const sessions: string[] = [];
   let limit: number | undefined;
   let cursor: string | undefined;
-  for (let index = 1; index < args.length;) {
+  for (let index = 0; index < args.length;) {
     const argument = args[index]!;
+    if (!argument.startsWith("--")) {
+      if (requestedFile !== undefined) throw invalidArguments("inspect accepts one .agenthist file");
+      requestedFile = argument;
+      index++;
+      continue;
+    }
     if (argument === "--agent" || argument.startsWith("--agent=")) {
       const [value, next] = readValue(args, index, "--agent");
       agents.add(parseAgent(value));
@@ -361,8 +367,33 @@ export async function runInspect(
     }
     throw invalidArguments(`unknown inspect flag: ${argument}`);
   }
-  const result = await withLiveStatus(runtime, globals, "Inspecting history archive", () =>
-    inspectHistoryArchive(path.resolve(runtime.cwd ?? process.cwd(), file), {
+  const cwd = runtime.cwd ?? process.cwd();
+  let file = requestedFile;
+  if (file === undefined) {
+    if (globals.json || runtime.input?.isTTY !== true || runtime.output?.isTTY !== true) {
+      throw invalidArguments("inspect requires one .agenthist file");
+    }
+    const selection = await selectArchiveFile({
+      action: "inspect",
+      cwd,
+      input: runtime.input,
+      output: runtime.output,
+      color: globals.color,
+      language: detectImportWizardLanguage(runtime.environment ?? process.env),
+    });
+    if (selection.status === "cancelled") {
+      return success(
+        "inspect",
+        { status: "cancelled" },
+        `${colorizeHuman("Inspect cancelled.", "warning", globals.color)}\n` +
+          `${colorizeHuman("No file opened.", "muted", globals.color)}\n`,
+        false,
+      );
+    }
+    file = selection.file;
+  }
+  const result = await withLiveStatus(runtime, globals, "Inspecting AgentHist file", () =>
+    inspectHistoryArchive(path.resolve(cwd, file), {
       sessions,
       ...(agents.size === 0 ? {} : { agents: [...agents] }),
       ...(limit === undefined ? {} : { limit }),
@@ -418,7 +449,7 @@ export async function runInspect(
       ? ""
       : `${colorizeHuman("Next cursor:", "muted", globals.color)} ` +
         `${colorizeHuman(result.nextCursor, "muted", globals.color)}\n`);
-  const human = humanTitle("Archive", globals.color) + "\n" + humanFields([
+  const human = humanTitle("AgentHist file", globals.color) + "\n" + humanFields([
     { label: "File", value: result.file },
     { label: "Size", value: humanBytes(result.sizeBytes) },
     { label: "SHA-256", value: result.sha256 },
@@ -455,8 +486,7 @@ export async function runImport(
   args: readonly string[],
   runtime: CliRuntime,
 ): Promise<CliResult> {
-  const file = args[0];
-  if (file === undefined || file.startsWith("--")) throw invalidArguments("import requires one .agenthist file");
+  let requestedFile: string | undefined;
   let mode: "dry_run" | "apply" | undefined;
   let targetAgent: Agent | undefined;
   let targetCodexHome: string | undefined;
@@ -469,8 +499,14 @@ export async function runImport(
   const agents = new Set<Agent>();
   const sessions: string[] = [];
   const pathMappings: string[] = [];
-  for (let index = 1; index < args.length;) {
+  for (let index = 0; index < args.length;) {
     const argument = args[index]!;
+    if (!argument.startsWith("--")) {
+      if (requestedFile !== undefined) throw invalidArguments("import accepts one .agenthist file");
+      requestedFile = argument;
+      index++;
+      continue;
+    }
     if (argument === "--dry-run" || argument === "--apply") {
       const candidate = argument === "--apply" ? "apply" : "dry_run";
       if (mode !== undefined) throw invalidArguments("import accepts exactly one of --dry-run or --apply");
@@ -587,11 +623,36 @@ export async function runImport(
   const opencodeDataRoot = targetOpenCodeRoot ?? globals.opencodeDataRoot;
   const claudeConfigRoot = targetClaudeRoot ?? globals.claudeConfigRoot;
   const piSessionRoot = targetPiRoot ?? globals.piSessionRoot;
+  let file = requestedFile;
+  if (file === undefined) {
+    if (mode !== undefined || globals.json || runtime.input?.isTTY !== true || runtime.output?.isTTY !== true) {
+      throw invalidArguments("import requires one .agenthist file");
+    }
+    const selection = await selectArchiveFile({
+      action: "import",
+      cwd,
+      input: runtime.input,
+      output: runtime.output,
+      color: globals.color,
+      language: language ?? detectImportWizardLanguage(environment),
+    });
+    if (selection.status === "cancelled") {
+      return success(
+        "import",
+        { status: "cancelled", written: 0 },
+        `${colorizeHuman("Import cancelled.", "warning", globals.color)}\n` +
+          `${colorizeHuman("No changes written.", "muted", globals.color)}\n`,
+        false,
+      );
+    }
+    file = selection.file;
+  }
+  const archiveFile = file;
   const executeImport = (
     selectedMode: "dry_run" | "apply",
     wizardRequest?: ImportWizardRequest,
   ): Promise<ImportHistoryResult> => importHistoryArchive({
-    file,
+    file: archiveFile,
     stateDirectory: globals.stateDirectory,
     mode: selectedMode,
     sessions: wizardRequest?.sessions ?? sessions,
@@ -630,8 +691,8 @@ export async function runImport(
     if (
       globals.json || runtime.input?.isTTY !== true || runtime.output?.isTTY !== true
     ) throw invalidArguments("interactive import requires a terminal; use --dry-run or --apply");
-    const catalog = await withLiveStatus(runtime, globals, "Opening history archive", () =>
-      openImportCatalog(file, cwd));
+    const catalog = await withLiveStatus(runtime, globals, "Opening AgentHist file", () =>
+      openImportCatalog(archiveFile, cwd));
     try {
       const outcome = await runImportWizard({
         catalog,
@@ -769,7 +830,7 @@ export async function runImport(
   return success(
     "import",
     data,
-    renderImportHuman(file, result, runtime.color === true),
+    renderImportHuman(archiveFile, result, runtime.color === true),
     globals.json,
     result.status === "blocked" ? 3 : 0,
   );

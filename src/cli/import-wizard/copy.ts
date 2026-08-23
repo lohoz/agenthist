@@ -237,7 +237,7 @@ const EN: ImportWizardCopy = {
   },
   preview: {
     title: "Session preview",
-    loading: "Loading conversation from the archive...",
+    loading: "Loading conversation from the AgentHist file...",
     conversation: "Conversation",
     you: "YOU",
     gap: "GAP",
@@ -427,7 +427,7 @@ const ZH: ImportWizardCopy = {
   },
   preview: {
     title: "会话预览",
-    loading: "正在从归档中读取会话...",
+    loading: "正在从 AgentHist 文件中读取会话...",
     conversation: "对话内容",
     you: "用户",
     gap: "缺口",

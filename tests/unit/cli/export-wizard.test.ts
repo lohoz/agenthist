@@ -96,7 +96,7 @@ test("interactive export selects, previews, reviews, renames, and exports histor
     { cue: "Session preview", keys: "\u001b" },
     { cue: "Select history to export", keys: "\r" },
     { cue: "Review export", keys: "o" },
-    { cue: "Archive: ", keys: `\u0015${selectedArchive}\r` },
+    { cue: "File: ", keys: `\u0015${selectedArchive}\r` },
     { cue: "Review export", keys: "l" },
     { cue: "确认导出", keys: "\u001b[6~" },
     { cue: "Pending input session", keys: "\r" },

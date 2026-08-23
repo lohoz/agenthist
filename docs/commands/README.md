@@ -8,8 +8,8 @@ Run `agenthist <command> --help` for concise usage information.
 | [`scan`](scan.md) | Scan history from every supported Agent |
 | [`history`](history.md) | Browse, search, and organize sessions |
 | [`resume`](resume.md) | Continue a conversation with any supported Agent |
-| [`export`](export.md) | Create a `.agenthist` archive |
-| [`inspect`](inspect.md) | Inspect and validate a `.agenthist` archive |
+| [`export`](export.md) | Create a `.agenthist` file |
+| [`inspect`](inspect.md) | Inspect and validate a `.agenthist` file |
 | [`import`](import.md) | Restore or convert sessions |
 | [`experience`](experience.md) | Extract recurring experience across sessions |
 | [`skill`](skill.md) | Install or remove the AgentHist Skill |

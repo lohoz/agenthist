@@ -60,7 +60,7 @@ test("live status stays silent outside an interactive human terminal", async () 
   const result = await withLiveStatus(
     { progressOutput: terminalOutput(json), environment: { TERM: "xterm" } },
     { json: true, color: false },
-    "Inspecting history archive",
+    "Inspecting AgentHist file",
     async () => 42,
   );
   assert.equal(result, 42);

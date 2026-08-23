@@ -1,11 +1,11 @@
 # `agenthist import`
 
-Restore sessions from a `.agenthist` archive, with optional conversion to another Agent format.
+Restore sessions from a `.agenthist` file, with optional conversion to another Agent format.
 
 ## Usage
 
 ```text
-agenthist import <file.agenthist> [--dry-run|--apply]
+agenthist import [file.agenthist] [--dry-run|--apply]
                                   [--agent <agent>]... [--session <session-ref>]...
                                   [--to <agent>]
                                   [--target <agent>=<path>]...
@@ -17,10 +17,11 @@ agenthist import <file.agenthist> [--dry-run|--apply]
 ## Interactive mode
 
 ```bash
+agenthist import
 agenthist import backup.agenthist
 ```
 
-In a terminal, omitting `--dry-run` and `--apply` opens the import interface:
+In a terminal, omit the file to choose a `.agenthist` file from the current directory. A single file is used directly; multiple files are listed newest first. Omitting `--dry-run` and `--apply` opens the import interface:
 
 1. Select sessions and preview their contents.
 2. Choose a target Agent for each session.
@@ -38,7 +39,7 @@ agenthist import backup.agenthist --dry-run
 agenthist import backup.agenthist --apply
 ```
 
-`--dry-run` creates a plan without writing. `--apply` validates the plan and writes it. Scripts, non-TTY environments, and `--json` mode require one of these flags. `--language` applies only to interactive mode.
+`--dry-run` creates a plan without writing. `--apply` validates the plan and writes it. Scripts, non-TTY environments, and `--json` mode require an explicit file and one of these flags. `--language` applies only to interactive mode.
 
 ## Selection and routing
 

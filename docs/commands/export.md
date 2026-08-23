@@ -1,6 +1,6 @@
 # `agenthist export`
 
-Export sessions from the AgentHist history library to a `.agenthist` archive.
+Export sessions from the AgentHist history library to a `.agenthist` file.
 
 ## Usage
 
@@ -30,4 +30,4 @@ non-TTY environments, and `--json` use the current scanned snapshot for direct e
 
 When the output path is omitted, AgentHist creates a timestamped filename in the current directory. Existing files are never overwritten.
 
-After exporting, run `agenthist inspect <file>` to review the archive.
+After exporting, run `agenthist inspect <file>` to review the AgentHist file.

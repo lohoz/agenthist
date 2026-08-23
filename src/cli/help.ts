@@ -30,6 +30,7 @@ Copy detected native history into the local AgentHist history pool.
 The default is every detected Agent; --agent is an optional filter.
 `,
   history: `Usage:
+  agenthist history
   agenthist history list [--agent <agent>]... [--view <active|archived|deleted|all>]
                          [--offset <count>] [--limit <count>]
   agenthist history search <query> [--agent <agent>]... [--view <view>]
@@ -39,8 +40,10 @@ The default is every detected Agent; --agent is an optional filter.
   agenthist history tag <session-ref> (--add <tag>|--remove <tag>)...
   agenthist history archive|unarchive|delete|undelete <session-ref>
 
-Browse or organize the scanned history pool. Organizing changes only AgentHist's library
-overlay; it never modifies the Agent's native history. List/search default to active,
+Running without a subcommand refreshes detected Agent history and opens an interactive browser
+for previewing, continuing, and organizing one conversation. The explicit subcommands remain
+non-interactive and read the current AgentHist snapshot. Organizing changes only AgentHist's
+library overlay; it never modifies the Agent's native history. List/search default to active,
 offset 0, and limit 50; limit may be at most 1000. Results report the current page,
 remaining count, and next offset when another page exists.
 `,
@@ -98,7 +101,8 @@ migratable session and reports anything skipped. --agent and --workspace are opt
 Workspace paths are resolved from the current directory and match scanned workspaces exactly.
 An explicit --session selection is strict and fails if that session cannot be exported.
 In a terminal, using no filters opens the export guide for browsing, previewing, selecting,
-and confirming history. --all bypasses the guide. Scripts and --json remain non-interactive.
+and confirming history after an incremental refresh. --all bypasses the guide. Scripts and
+--json remain non-interactive and read the current AgentHist snapshot.
 --language selects the initial guide language and is unavailable for direct export.
 Existing output files are never overwritten.
 `,

@@ -49,6 +49,7 @@ import {
   type ImportWizardLanguage,
 } from "./import-wizard/copy.js";
 import { runExportWizard } from "./export-wizard/index.js";
+import { refreshDetectedHistory } from "./history-refresh.js";
 import { withLiveStatus } from "./live-status.js";
 import { displayWidth, padDisplay, truncateDisplay } from "./terminal-layout.js";
 
@@ -204,6 +205,10 @@ export async function runExport(
     sessions.length === 0 && output === undefined;
   let result: ExportHistoryResult;
   if (interactiveRequest && !globals.json && runtime.input?.isTTY === true && runtime.output?.isTTY === true) {
+    await withLiveStatus(runtime, globals, "Refreshing Agent history", async (status) => {
+      status.update("Refreshing detected Agent history");
+      await refreshDetectedHistory(globals, runtime);
+    });
     const catalog = await withLiveStatus(runtime, globals, "Opening scanned history", () =>
       openExportCatalog(globals.stateDirectory));
     const outcome = await runExportWizard({

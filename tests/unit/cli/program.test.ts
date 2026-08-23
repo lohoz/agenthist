@@ -73,9 +73,13 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
   assert.match(exportHelp.stdout, /every safely\s+migratable session/i);
   assert.match(exportHelp.stdout, /reports anything skipped/i);
   assert.match(exportHelp.stdout, /explicit --session selection is strict/i);
+  assert.match(exportHelp.stdout, /after an incremental refresh/i);
 
   const historyHelp = await runCli(["history", "list", "--help"]);
   assert.equal(historyHelp.exitCode, 0);
+  assert.match(historyHelp.stdout, /^Usage:\n  agenthist history$/m);
+  assert.match(historyHelp.stdout, /without a subcommand refreshes detected Agent history/i);
+  assert.match(historyHelp.stdout, /explicit subcommands remain\s+non-interactive/i);
   assert.match(historyHelp.stdout, /overlay/);
   assert.match(historyHelp.stdout, /never modifies the Agent's native history/);
   assert.match(historyHelp.stdout, /--offset <count>.*--limit <count>/s);
@@ -220,6 +224,10 @@ test("version, doctor, malformed journals, and unsupported commands have stable 
   const nonInteractiveImport = await runCli(["import", "fixture.agenthist"]);
   assert.equal(nonInteractiveImport.exitCode, 2);
   assert.match(nonInteractiveImport.stderr, /interactive import requires a terminal; use --dry-run or --apply/);
+
+  const nonInteractiveHistory = await runCli(["history"]);
+  assert.equal(nonInteractiveHistory.exitCode, 2);
+  assert.match(nonInteractiveHistory.stderr, /history without a subcommand requires an interactive terminal/);
 
   const nonInteractiveLanguage = await runCli([
     "import", "fixture.agenthist", "--dry-run", "--language", "zh",

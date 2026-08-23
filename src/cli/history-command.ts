@@ -8,6 +8,7 @@ import {
   MAX_HISTORY_LIMIT,
   MAX_HISTORY_OFFSET,
   mutateHistory,
+  openHistoryCatalog,
   scanHistory,
   searchHistory,
   showHistory,
@@ -48,6 +49,10 @@ import {
   type HumanField,
 } from "./human-output.js";
 import { withLiveStatus } from "./live-status.js";
+import { detectImportWizardLanguage } from "./import-wizard/copy.js";
+import { refreshDetectedHistory } from "./history-refresh.js";
+import { runHistoryWizard } from "./history-wizard.js";
+import { runResume } from "./resume-command.js";
 import { historySourceOptions } from "./source-options.js";
 import {
   displayWidth,
@@ -513,6 +518,41 @@ function sessionListItem(
     `      ${colorizeHuman(`${context} · ${session.updatedAt}${state}`, "muted", color)}\n`;
 }
 
+async function runInteractiveHistory(
+  globals: GlobalOptions,
+  runtime: CliRuntime,
+): Promise<CliResult> {
+  if (globals.json) throw invalidArguments("interactive history does not support --json");
+  if (runtime.input?.isTTY !== true || runtime.output?.isTTY !== true) {
+    throw invalidArguments("history without a subcommand requires an interactive terminal");
+  }
+  await withLiveStatus(runtime, globals, "Refreshing Agent history", async (status) => {
+    status.update("Refreshing detected Agent history");
+    await refreshDetectedHistory(globals, runtime);
+  });
+  const catalog = await withLiveStatus(runtime, globals, "Opening history", () =>
+    openHistoryCatalog(globals.stateDirectory));
+  const outcome = await runHistoryWizard({
+    catalog,
+    input: runtime.input,
+    output: runtime.output,
+    cwd: runtime.cwd ?? process.cwd(),
+    color: globals.color,
+    language: detectImportWizardLanguage(runtime.environment ?? process.env),
+  });
+  if (outcome.status === "cancelled") {
+    return success("history", { status: "cancelled" }, "History browser closed.\n", false);
+  }
+  if (outcome.status === "resume") {
+    return runResume(globals, ["--session", outcome.sessionRef], runtime);
+  }
+  const args = [outcome.operation, outcome.sessionRef];
+  if (outcome.name !== undefined) args.push("--name", outcome.name);
+  for (const tag of outcome.addTags ?? []) args.push("--add", tag);
+  for (const tag of outcome.removeTags ?? []) args.push("--remove", tag);
+  return runHistory(globals, args, runtime);
+}
+
 export async function runHistory(
   globals: GlobalOptions,
   args: readonly string[],
@@ -520,6 +560,7 @@ export async function runHistory(
 ): Promise<CliResult> {
   const action = args[0];
   const outputWidth = humanOutputWidth(runtime.output?.columns);
+  if (action === undefined) return runInteractiveHistory(globals, runtime);
   if (action === "list") {
     const flags = parseListFlags(args.slice(1));
     const result = await withLiveStatus(runtime, globals, "Loading history", () =>

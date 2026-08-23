@@ -33,8 +33,8 @@ export function resumeWizardCopy(language: ImportWizardLanguage): ImportWizardCo
       noMatches: chinese ? "没有匹配当前搜索的会话。" : "No conversations match the current search.",
       searchTitle: chinese ? "搜索会话" : "Search conversations",
       searchHelp: chinese
-        ? "匹配标题、工作区、模型、原生 ID 或会话引用。"
-        : "Matches title, workspace, model, native ID, or session reference.",
+        ? "匹配标题、工作区、模型、标签、状态、原生 ID 或会话引用。"
+        : "Matches title, workspace, model, tags, state, native ID, or session reference.",
       selectRequired: chinese ? "请选择一个会话后继续。" : "Choose a conversation before continuing.",
       previewPaneRequired: chinese ? "请先切换到会话栏再预览。" :
         "Switch to the Conversations pane to preview.",

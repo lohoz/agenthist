@@ -188,7 +188,15 @@ function compactUpdated(value: string): string {
 function filteredEntries(entries: readonly ImportCatalogEntry[], query: string): readonly ImportCatalogEntry[] {
   const needle = query.trim().toLocaleLowerCase();
   if (needle === "") return entries;
-  return entries.filter((entry) => [entry.title, entry.sessionRef, entry.nativeId, entry.workspace, entry.model]
+  return entries.filter((entry) => [
+    entry.title,
+    entry.sessionRef,
+    entry.nativeId,
+    entry.workspace,
+    entry.model,
+    entry.libraryState,
+    ...entry.tags,
+  ]
     .some((value) => value.toLocaleLowerCase().includes(needle)));
 }
 
@@ -696,9 +704,11 @@ function renderSelectionSession(
 ): string {
   const marker = explicit.has(entry.sessionRef) ? "✓" : selected.has(entry.sessionRef) ? "*" : " ";
   const markerRole = marker === "✓" ? "selected" : marker === "*" ? "info" : "plain";
+  const updated = compactUpdated(entry.updatedAt);
+  const status = entry.libraryState === "active" ? updated : `${entry.libraryState} · ${updated}`;
   const content = styledColumns(
     single ? sessionLabel(entry, scope) : `[${marker}] ${sessionLabel(entry, scope)}`,
-    compactUpdated(entry.updatedAt),
+    status,
     Math.max(1, width - 2),
     single ? "plain" : markerRole,
     "muted",

@@ -12,6 +12,7 @@ import {
   type ImportSessionPreview,
   type ImportWorkspaceInspection,
 } from "../../application/index.js";
+import { pathFlavorForPlatform, samePath } from "../../domain/host-path.js";
 import {
   GAP_RUN_COLLAPSE_THRESHOLD,
   groupConversationForDisplay,
@@ -59,6 +60,8 @@ interface SessionSelectionOptions {
   readonly catalog: HistorySelectionCatalog;
   readonly color?: boolean;
   readonly targetAgent?: Agent;
+  readonly selectionMode?: "multiple" | "single";
+  readonly preferredWorkspace?: string;
 }
 
 export interface HistorySelectionScreenOptions extends SessionSelectionOptions {
@@ -901,7 +904,8 @@ async function selectSessionsScreen(
   step = 0,
 ): Promise<ScreenMove> {
   const color = options.color === true;
-  let activePane: BrowserPane = "scopes";
+  const single = options.selectionMode === "single";
+  let activePane: BrowserPane = single ? "sessions" : "scopes";
   let scopeCursor = -1;
   let sessionCursor = 0;
   let notice = state.reviewNotice === undefined
@@ -961,7 +965,10 @@ async function selectSessionsScreen(
       continue;
     }
     if (scopeCursor < 0) {
-      const firstWorkspace = scopes.findIndex((scope) => scope.kind === "workspace");
+      const preferredWorkspace = options.preferredWorkspace;
+      const preferred = preferredWorkspace === undefined ? -1 : scopes.findIndex((scope) =>
+        scope.kind === "workspace" && samePath(scope.workspace, preferredWorkspace, pathFlavorForPlatform()));
+      const firstWorkspace = preferred >= 0 ? preferred : scopes.findIndex((scope) => scope.kind === "workspace");
       scopeCursor = firstWorkspace < 0 ? 0 : firstWorkspace;
     }
     scopeCursor = Math.min(scopeCursor, scopes.length - 1);
@@ -991,7 +998,7 @@ async function selectSessionsScreen(
       ["Enter", copy.actions.next],
     ], [
       ["/", copy.actions.search],
-      ["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll],
+      ...(single ? [] : [["a", allSelected ? copy.actions.clearAll : copy.actions.selectAll] as KeyHint]),
       ...(activePane === "sessions" ? [["v", copy.actions.preview] as KeyHint] : []),
       ["Esc", copy.actions.exit],
       languageHint(terminal, provider),
@@ -1012,6 +1019,15 @@ async function selectSessionsScreen(
     if (interrupted(key) || key.name === "escape") return "cancel";
     if (switchLanguage(terminal, key)) continue;
     if (key.name === "return" || key.name === "enter") {
+      if (single && activePane === "scopes") {
+        activePane = "sessions";
+        continue;
+      }
+      if (single) {
+        state.explicit.clear();
+        state.explicit.add(sessions[sessionCursor]!.sessionRef);
+        return "next";
+      }
       if (selected.length === 0) {
         notice = copy.selection.selectRequired;
         continue;
@@ -1037,6 +1053,7 @@ async function selectSessionsScreen(
       continue;
     }
     if (key.name === "a") {
+      if (single) continue;
       if (allSelected) state.explicit.clear();
       else for (const entry of allowed) state.explicit.add(entry.sessionRef);
       continue;
@@ -1065,7 +1082,15 @@ async function selectSessionsScreen(
       }
     }
     if (key.name === "space") {
-      toggleEntries(state.explicit, activePane === "scopes" ? scope.entries : [sessions[sessionCursor]!]);
+      if (single) {
+        const entry = activePane === "scopes" ? scope.entries[0] : sessions[sessionCursor];
+        if (entry !== undefined) {
+          state.explicit.clear();
+          state.explicit.add(entry.sessionRef);
+        }
+      } else {
+        toggleEntries(state.explicit, activePane === "scopes" ? scope.entries : [sessions[sessionCursor]!]);
+      }
       continue;
     }
     if (key.name === "v") {
@@ -1097,8 +1122,15 @@ export async function chooseHistorySessions(
   if (allowed.length === 0) throw new Error("no selectable history sessions are available");
   const byReference = new Set(allowed.map((entry) => entry.sessionRef));
   const initialReferences = options.sessions.length === 0
-    ? allowed.map((entry) => entry.sessionRef)
+    ? options.selectionMode === "single"
+      ? [allowed.find((entry) => options.preferredWorkspace !== undefined &&
+          samePath(entry.workspace, options.preferredWorkspace, pathFlavorForPlatform())) ?? allowed[0]!]
+        .map((entry) => entry.sessionRef)
+      : allowed.map((entry) => entry.sessionRef)
     : options.sessions;
+  if (options.selectionMode === "single" && initialReferences.length !== 1) {
+    throw new Error("single history selection requires exactly one session");
+  }
   const missing = initialReferences.find((reference) => !byReference.has(reference));
   if (missing !== undefined) throw new Error(`selected history session was not found: ${missing}`);
   const state: WizardState = {

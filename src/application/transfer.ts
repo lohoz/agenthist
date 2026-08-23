@@ -215,11 +215,30 @@ function exportResult(
   };
 }
 
-interface PreparedExport {
-  readonly output: string;
+export interface PreparedHistorySource {
   readonly sources: readonly ArchiveObjectSource[];
   readonly entries: readonly ArchiveEntry[];
   readonly skippedSessions: readonly ExportSkippedSession[];
+}
+
+export async function withPreparedHistorySource<T>(
+  options: ExportHistoryOptions,
+  operation: (source: PreparedHistorySource) => Promise<T>,
+): Promise<T> {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-history-source-"));
+  try {
+    const source = await withStateReadLock(
+      options.stateDirectory,
+      () => prepareHistorySource(options, workspace),
+    );
+    return await operation(source);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+interface PreparedExport extends PreparedHistorySource {
+  readonly output: string;
 }
 
 function exportAgentCounts(entries: readonly ArchiveEntry[]): ExportHistoryPlan["agents"] {
@@ -365,10 +384,10 @@ export async function openExportCatalog(
   });
 }
 
-async function prepareExport(
+export async function prepareHistorySource(
   options: ExportHistoryOptions,
   workspace: string,
-): Promise<PreparedExport> {
+): Promise<PreparedHistorySource> {
   const snapshots = await selectedSnapshots(options.stateDirectory, options.agents);
   const all = snapshots.flatMap((snapshot) => snapshot.sessions);
   const cwd = options.cwd ?? process.cwd();
@@ -378,10 +397,6 @@ async function prepareExport(
   );
   if (selected.length === 0) {
     throw new Error("no history sessions are available to export");
-  }
-  const output = resolveExportArchivePath(cwd, options.output);
-  if (pathsOverlap(options.stateDirectory, output)) {
-    throw new Error("archive output cannot be inside AgentHist state");
   }
   const sources: ArchiveObjectSource[] = [];
   const entries: ArchiveEntry[] = [];
@@ -426,7 +441,18 @@ async function prepareExport(
     }
     throw new Error("no history sessions are available to export");
   }
-  return { output, sources, entries, skippedSessions };
+  return { sources, entries, skippedSessions };
+}
+
+async function prepareExport(
+  options: ExportHistoryOptions,
+  workspace: string,
+): Promise<PreparedExport> {
+  const output = resolveExportArchivePath(options.cwd ?? process.cwd(), options.output);
+  if (pathsOverlap(options.stateDirectory, output)) {
+    throw new Error("archive output cannot be inside AgentHist state");
+  }
+  return { output, ...await prepareHistorySource(options, workspace) };
 }
 
 async function exportHistoryUnlocked(options: ExportHistoryOptions): Promise<ExportHistoryResult> {

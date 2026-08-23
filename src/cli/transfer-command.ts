@@ -745,6 +745,7 @@ export async function runImport(
       target_agent: item.targetAgent,
       source_session_ref: item.sourceSessionRef,
       target_session_ref: item.targetSessionRef,
+      target_native_id: item.targetNativeId,
       quality: item.quality,
       findings: item.findings,
       classification: item.classification,

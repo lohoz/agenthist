@@ -18,6 +18,7 @@ AgentHist 集中整理受支持的编程 Agent 会话，提供查看、搜索、
 ## ✨ Highlights
 
 - **统一历史**：扫描受支持的 Agent，在一个入口中查看、搜索和整理会话。
+- **任意 Agent 继续**：选择最近的会话，使用原 Agent 或其他受支持的 Agent 接着聊。
 - **选择性迁移**：导出全部历史，或按 Agent、工作区、会话筛选，再在目标机器上选择需要恢复的内容。
 - **跨 Agent 转换**：导入时选择目标 Agent，逐会话报告保留、省略和重建的内容。
 - **安全写入**：识别重复会话，在写入前报告冲突，并通过 transaction 支持恢复和回滚。
@@ -63,6 +64,7 @@ agenthist skill install
 | [`doctor`](docs/commands/doctor.md) | 检查本机的 Agent 历史位置 |
 | [`scan`](docs/commands/scan.md) | 更新 AgentHist 历史库 |
 | [`history`](docs/commands/history.md) | 查看、搜索和整理会话 |
+| [`resume`](docs/commands/resume.md) | 使用任意受支持的 Agent 继续会话 |
 | [`export`](docs/commands/export.md) | 导出 `.agenthist` 文件 |
 | [`inspect`](docs/commands/inspect.md) | 查看导出文件中的内容 |
 | [`import`](docs/commands/import.md) | 恢复会话或转换到另一个 Agent |
@@ -93,6 +95,18 @@ agenthist history show <session-ref>
 `scan` 会把已发现的历史复制到 AgentHist 的本地历史库。之后可以随时重新运行，加入新产生的会话。
 
 `session-ref` 是 AgentHist 生成的会话唯一标识，例如 `ahsr1_codex_ck1_7d4c...`，可在 `history list` 或 `history search` 中查看。
+
+### 继续会话
+
+浏览最近的会话并选择接着使用的 Agent：
+
+```bash
+agenthist resume
+agenthist resume --last
+agenthist resume --last --agent claude
+```
+
+界面优先显示当前工作区。选择原 Agent 会直接打开原生会话；选择其他 Agent 会先预览转换结果，再创建并打开目标会话。完整用法见 [`agenthist resume`](docs/commands/resume.md)。
 
 ## 🔄 迁移与转换
 

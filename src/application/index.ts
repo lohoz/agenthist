@@ -46,6 +46,7 @@ export type {
   HistorySelectionCatalog,
   HistorySessionPreview,
 } from "./history-catalog.js";
+export { openHistoryCatalog } from "./history-catalog.js";
 export type {
   ImportWorkspaceAvailability,
   ImportWorkspaceInspection,
@@ -137,6 +138,11 @@ export type {
   ImportRouteSummary,
   ImportWorkspaceStatus,
 } from "./history-import.js";
+
+export { transferHistorySession } from "./local-transfer.js";
+export type { TransferHistorySessionOptions } from "./local-transfer.js";
+export { prepareResumeLaunch } from "./resume.js";
+export type { ResumeLaunchOptions } from "./resume.js";
 
 export type {
   ImportConversionPlanItem,

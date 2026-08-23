@@ -33,6 +33,7 @@ import {
 import { prepareClaudePortableSource } from "./conversion/portable.js";
 import { scanClaude } from "./scan.js";
 import { requireClaudeSource, resolveClaudeSource, type ClaudeSourceOptions } from "./source.js";
+import { launchClaudeSession } from "./launcher.js";
 
 function sourceOptions(options: AgentSourceOptions): ClaudeSourceOptions {
   return {
@@ -84,6 +85,7 @@ function nativeImportResult(result: RestoreClaudeResult) {
 
 export const claudeAdapter = {
   id: "claude",
+  resume: { launch: launchClaudeSession },
   source: {
     detect: detectClaude,
     inspect: detectClaude,

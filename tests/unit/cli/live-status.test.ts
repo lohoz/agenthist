@@ -66,3 +66,16 @@ test("live status stays silent outside an interactive human terminal", async () 
   assert.equal(result, 42);
   assert.deepEqual(json, []);
 });
+
+test("live status uses a readable fallback when a pseudo-terminal reports zero columns", () => {
+  const rendered: string[] = [];
+  const status = createLiveStatus({
+    output: terminalOutput(rendered, true, 0),
+    enabled: true,
+    color: false,
+    message: "Refreshing Agent history",
+    delayMilliseconds: 0,
+  });
+  status.stop();
+  assert.match(rendered.join(""), /Refreshing Agent history/);
+});

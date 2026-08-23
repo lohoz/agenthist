@@ -14,6 +14,7 @@ import { commandHelp, rootHelp } from "./help.js";
 import { runExperience } from "./experience-command.js";
 import { runDoctor, runHistory, runScan } from "./history-command.js";
 import { runCodex, runTransaction } from "./maintenance-command.js";
+import { runResume } from "./resume-command.js";
 import { runSkill } from "./skill-command.js";
 import { runExport, runImport, runInspect } from "./transfer-command.js";
 
@@ -122,6 +123,7 @@ export async function runCli(args: readonly string[], runtime: CliRuntime = {}):
     if (command === "doctor") return await runDoctor(globals, commandArgs.slice(1), runtime);
     if (command === "scan") return await runScan(globals, commandArgs.slice(1), runtime);
     if (command === "history") return await runHistory(globals, commandArgs.slice(1), runtime);
+    if (command === "resume") return await runResume(globals, commandArgs.slice(1), runtime);
     if (command === "experience") return await runExperience(globals, commandArgs.slice(1), runtime);
     if (command === "skill") return await runSkill(globals, commandArgs.slice(1), runtime);
     if (command === "export") return await runExport(globals, commandArgs.slice(1), runtime);

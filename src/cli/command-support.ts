@@ -6,6 +6,7 @@ import {
 } from "../application/index.js";
 import { paint } from "./style.js";
 import { sanitizeHumanOutput } from "./terminal-safety.js";
+import type { AgentProcessRunner } from "../infrastructure/agent-process.js";
 
 export interface CliResult {
   readonly exitCode: number;
@@ -19,6 +20,7 @@ export interface CliRuntime {
   readonly home?: string;
   readonly fetcher?: typeof fetch;
   readonly analysisProcessRunner?: AnalysisProcessRunner;
+  readonly agentProcessRunner?: AgentProcessRunner;
   readonly color?: boolean;
   readonly input?: NodeJS.ReadableStream & { readonly isTTY?: boolean };
   readonly output?: NodeJS.WritableStream & { readonly isTTY?: boolean; readonly columns?: number };

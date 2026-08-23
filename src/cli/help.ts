@@ -4,6 +4,7 @@ const commands = [
   ["doctor", "Inspect supported Agent history sources"],
   ["scan", "Capture history from every detected Agent"],
   ["history", "List, search, show, and organize captured history"],
+  ["resume", "Continue any captured conversation with a supported Agent"],
   ["experience", "Extract recurring experience from captured history"],
   ["skill", "Install or remove AgentHist usage guidance"],
   ["export", "Export captured history and report skipped sessions"],
@@ -42,6 +43,17 @@ Browse or organize the scanned history pool. Organizing changes only AgentHist's
 overlay; it never modifies the Agent's native history. List/search default to active,
 offset 0, and limit 50; limit may be at most 1000. Results report the current page,
 remaining count, and next offset when another page exists.
+`,
+  resume: `Usage:
+  agenthist resume
+  agenthist resume --last [--agent <codex|claude|opencode|pi>]
+  agenthist resume --session <session-ref> [--agent <agent>]
+
+Refresh local history, choose one conversation, and continue it with any supported Agent.
+The current workspace and its most recent conversations are shown first. Continuing with the
+source Agent opens its native session directly; choosing another Agent runs the existing
+conversion preflight and transactional import before opening it. --last skips conversation
+selection, while --session is available for advanced use.
 `,
   experience: `Usage:
   agenthist experience [--dry-run]

@@ -33,6 +33,7 @@ import {
 import { createCodexPortableMaterializer } from "./conversion/portable.js";
 import { scanCodex } from "./scan.js";
 import { resolveCodexSource, type CodexSourceOptions } from "./source.js";
+import { launchCodexSession } from "./launcher.js";
 
 function sourceOptions(options: AgentSourceOptions): CodexSourceOptions {
   return {
@@ -91,6 +92,7 @@ function nativeImportResult(result: RestoreCodexResult) {
 
 export const codexAdapter = {
   id: "codex",
+  resume: { launch: launchCodexSession },
   source: {
     detect: detectCodex,
     inspect: detectCodex,

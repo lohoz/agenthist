@@ -7,6 +7,7 @@ Run `agenthist <command> --help` for concise usage information.
 | [`doctor`](doctor.md) | Check history locations and availability |
 | [`scan`](scan.md) | Scan history from every supported Agent |
 | [`history`](history.md) | Browse, search, and organize sessions |
+| [`resume`](resume.md) | Continue a conversation with any supported Agent |
 | [`export`](export.md) | Create a `.agenthist` archive |
 | [`inspect`](inspect.md) | Inspect and validate a `.agenthist` archive |
 | [`import`](import.md) | Restore or convert sessions |

@@ -45,6 +45,7 @@ import {
   type OpenCodeSourceOptions,
 } from "./source.js";
 import { loadOpenCodeToolOutputResources } from "./tool-output.js";
+import { launchOpenCodeSession } from "./launcher.js";
 
 function sourceOptions(options: AgentSourceOptions): OpenCodeSourceOptions {
   return {
@@ -187,6 +188,7 @@ function nativeImportResult(result: RestoreOpenCodeResult) {
 
 export const openCodeAdapter = {
   id: "opencode",
+  resume: { launch: launchOpenCodeSession },
   source: {
     detect: detectOpenCode,
     inspect: inspectOpenCode,

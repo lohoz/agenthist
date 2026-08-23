@@ -33,6 +33,7 @@ import {
 } from "./migration/transaction.js";
 import { scanPi } from "./scan.js";
 import { requirePiSource, resolvePiSource, type PiSourceOptions } from "./source.js";
+import { launchPiSession } from "./launcher.js";
 
 function sourceOptions(options: AgentSourceOptions): PiSourceOptions {
   return {
@@ -82,6 +83,7 @@ function nativeImportResult(result: RestorePiResult) {
 
 export const piAdapter = {
   id: "pi",
+  resume: { launch: launchPiSession },
   source: {
     detect: detectPi,
     inspect: detectPi,

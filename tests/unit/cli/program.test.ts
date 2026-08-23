@@ -41,7 +41,7 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
 
   assert.equal(result.exitCode, 0);
   for (const command of [
-    "doctor", "scan", "history", "experience", "skill", "export", "inspect", "import", "transaction",
+    "doctor", "scan", "history", "resume", "experience", "skill", "export", "inspect", "import", "transaction",
   ]) {
     assert.match(result.stdout, new RegExp(`^  ${command}\\s`, "m"));
   }
@@ -84,6 +84,12 @@ test("root help exposes the intended user actions without legacy surfaces", asyn
 
   assert.doesNotMatch(result.stdout, /^  convert\s/m);
   assert.doesNotMatch(importHelp.stdout, /accept-loss|loss-report-digest/i);
+
+  const resumeHelp = await runCli(["resume", "--help"]);
+  assert.equal(resumeHelp.exitCode, 0);
+  assert.match(resumeHelp.stdout, /agenthist resume --last/);
+  assert.match(resumeHelp.stdout, /source Agent opens its native session directly/i);
+  assert.doesNotMatch(resumeHelp.stdout, /convert command|daemon|watcher/i);
 
   const experienceHelp = await runCli(["experience", "--help"]);
   assert.equal(experienceHelp.exitCode, 0);

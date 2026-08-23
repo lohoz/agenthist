@@ -95,6 +95,7 @@ export interface ImportHistoryItem {
   readonly targetAgent: Agent;
   readonly sourceSessionRef: string;
   readonly targetSessionRef: string;
+  readonly targetNativeId: string;
   readonly quality: ImportRouteQuality;
   readonly findings: readonly ConversionFinding[];
   readonly classification: ImportClassification;
@@ -105,6 +106,17 @@ export interface ImportHistoryItem {
   readonly workspaceStatus: ImportWorkspaceStatus;
   readonly reason?: string;
 }
+
+export interface PreparedHistoryImportSource {
+  readonly entries: readonly ArchiveEntry[];
+  readonly objects: ReadonlyMap<string, string>;
+  readonly pathFlavor: PathFlavor;
+}
+
+export type PreparedHistoryImportOptions = Omit<
+  ImportHistoryOptions,
+  "file" | "sessions" | "agents"
+>;
 
 export interface ImportHistoryWorkspace {
   readonly source: string;
@@ -161,7 +173,7 @@ async function restoreWorkspace(root: string, agent: Agent): Promise<string> {
   return directory;
 }
 
-function restoreSourceOptions(options: ImportHistoryOptions, agent: Agent): AgentSourceOptions {
+function restoreSourceOptions(options: PreparedHistoryImportOptions, agent: Agent): AgentSourceOptions {
   const common = {
     ...(options.environment === undefined ? {} : { environment: options.environment }),
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -192,7 +204,7 @@ function restoreSourceOptions(options: ImportHistoryOptions, agent: Agent): Agen
 }
 
 async function prepareRestores(
-  options: ImportHistoryOptions,
+  options: PreparedHistoryImportOptions,
   entries: readonly ImportEntry[],
   objects: ReadonlyMap<string, string>,
   workspace: string,
@@ -375,6 +387,7 @@ function publicImportResult(
         targetAgent: agentResult.agent,
         sourceSessionRef: entry.projection?.sourceSessionRef ?? item.sessionRef,
         targetSessionRef: item.sessionRef,
+        targetNativeId: item.nativeId,
         quality: entry.projection?.status ?? "native",
         findings: entry.projection?.findings ?? [],
         classification: item.classification,
@@ -457,7 +470,7 @@ function targetEntries(
 }
 
 async function prepareImportPlan(
-  options: ImportHistoryOptions,
+  options: PreparedHistoryImportOptions,
   sourceEntries: readonly ArchiveEntry[],
   extractedObjects: ReadonlyMap<string, string>,
   workspace: string,
@@ -534,27 +547,26 @@ async function prepareImportPlan(
   };
 }
 
-export async function importHistoryArchive(options: ImportHistoryOptions): Promise<ImportHistoryResult> {
+async function importPreparedHistoryUnlocked(
+  options: PreparedHistoryImportOptions,
+  source: PreparedHistoryImportSource,
+): Promise<ImportHistoryResult> {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-import-"));
   try {
-    const read = await readArchive(path.resolve(options.cwd ?? process.cwd(), options.file), workspace);
-    validateArchiveSemantics(read.manifest, read.extractedObjects);
-    await validateArchiveObjects(read.manifest, read.extractedObjects);
-    const entries = selectImportEntries(read.manifest.entries, options.agents, options.sessions ?? []);
     if (options.mode === "dry_run") {
       return await withStateReadLock(options.stateDirectory, async () => {
         await assertNoPendingTransactions(options.stateDirectory);
         const prepared = await prepareImportPlan(
           options,
-          entries,
-          read.extractedObjects,
+          source.entries,
+          source.objects,
           workspace,
-          read.manifest.pathFlavor,
+          source.pathFlavor,
         );
         if (prepared.restores === undefined) {
           return blockedImportResult(
             options.mode,
-            entries,
+            source.entries,
             prepared.routes,
             prepared.blockedWorkspaces ?? [],
             prepared.conversions.items,
@@ -563,7 +575,7 @@ export async function importHistoryArchive(options: ImportHistoryOptions): Promi
         return publicImportResult(
           options.mode,
           "ready",
-          entries,
+          source.entries,
           prepared.targetEntries,
           prepared.routes,
           prepared.restores.restores.map(restoreResult),
@@ -575,15 +587,15 @@ export async function importHistoryArchive(options: ImportHistoryOptions): Promi
       await assertNoPendingTransactions(options.stateDirectory);
       const prepared = await prepareImportPlan(
         options,
-        entries,
-        read.extractedObjects,
+        source.entries,
+        source.objects,
         workspace,
-        read.manifest.pathFlavor,
+        source.pathFlavor,
       );
       if (prepared.restores === undefined) {
         return blockedImportResult(
           options.mode,
-          entries,
+          source.entries,
           prepared.routes,
           prepared.blockedWorkspaces ?? [],
           prepared.conversions.items,
@@ -598,12 +610,54 @@ export async function importHistoryArchive(options: ImportHistoryOptions): Promi
       return publicImportResult(
         options.mode,
         "completed",
-        entries,
+        source.entries,
         prepared.targetEntries,
         prepared.routes,
         completed,
         prepared.restores.workspaces,
       );
+    });
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+export async function importPreparedHistory(
+  options: PreparedHistoryImportOptions,
+  source: PreparedHistoryImportSource,
+): Promise<ImportHistoryResult> {
+  if (source.entries.length === 0) throw new Error("no history sessions are available to import");
+  return importPreparedHistoryUnlocked(options, source);
+}
+
+export async function importHistoryArchive(options: ImportHistoryOptions): Promise<ImportHistoryResult> {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-import-archive-"));
+  try {
+    const read = await readArchive(path.resolve(options.cwd ?? process.cwd(), options.file), workspace);
+    validateArchiveSemantics(read.manifest, read.extractedObjects);
+    await validateArchiveObjects(read.manifest, read.extractedObjects);
+    const entries = selectImportEntries(read.manifest.entries, options.agents, options.sessions ?? []);
+    return await importPreparedHistory({
+      stateDirectory: options.stateDirectory,
+      ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
+      ...(options.sqliteHome === undefined ? {} : { sqliteHome: options.sqliteHome }),
+      ...(options.profile === undefined ? {} : { profile: options.profile }),
+      ...(options.opencodeDataRoot === undefined ? {} : { opencodeDataRoot: options.opencodeDataRoot }),
+      ...(options.opencodeDatabase === undefined ? {} : { opencodeDatabase: options.opencodeDatabase }),
+      ...(options.claudeConfigRoot === undefined ? {} : { claudeConfigRoot: options.claudeConfigRoot }),
+      ...(options.piSessionRoot === undefined ? {} : { piSessionRoot: options.piSessionRoot }),
+      ...(options.providerPolicy === undefined ? {} : { providerPolicy: options.providerPolicy }),
+      ...(options.pathMappings === undefined ? {} : { pathMappings: options.pathMappings }),
+      ...(options.targetAgent === undefined ? {} : { targetAgent: options.targetAgent }),
+      ...(options.sessionTargets === undefined ? {} : { sessionTargets: options.sessionTargets }),
+      mode: options.mode,
+      ...(options.environment === undefined ? {} : { environment: options.environment }),
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.home === undefined ? {} : { home: options.home }),
+    }, {
+      entries,
+      objects: read.extractedObjects,
+      pathFlavor: read.manifest.pathFlavor,
     });
   } finally {
     await rm(workspace, { recursive: true, force: true });

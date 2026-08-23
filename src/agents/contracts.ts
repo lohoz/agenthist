@@ -207,6 +207,21 @@ export interface AgentPortableTargetCapability {
   write(options: WriteAgentPortableProjectionsOptions): Promise<PreparedArchiveEntries>;
 }
 
+export interface AgentResumeRequest {
+  readonly nativeId: string;
+  readonly cwd: string;
+}
+
+export interface AgentLaunchSpec {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+}
+
+export interface AgentResumeCapability {
+  launch(request: AgentResumeRequest): AgentLaunchSpec;
+}
+
 export interface AgentAdapter<A extends Agent = Agent> {
   readonly id: A;
   readonly source: AgentSourceCapability;
@@ -215,4 +230,5 @@ export interface AgentAdapter<A extends Agent = Agent> {
   readonly transaction: AgentTransactionCapability;
   readonly portableSource: AgentPortableSourceCapability;
   readonly portableTarget: AgentPortableTargetCapability;
+  readonly resume: AgentResumeCapability;
 }

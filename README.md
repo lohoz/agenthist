@@ -18,6 +18,7 @@ It can also find recurring requirements, preferences, and working methods across
 ## ✨ Highlights
 
 - **Unified history:** Browse, search, and organize sessions from supported Agents through one interface.
+- **Continue with any Agent:** Pick a recent conversation and reopen it with its source Agent or another supported Agent.
 - **Selective migration:** Export all history or filter by Agent, workspace, or session, then choose what to restore on the target machine.
 - **Cross-Agent conversion:** Choose a target Agent during import and see what each conversion preserves, omits, or reconstructs.
 - **Safe writes:** Detect duplicate sessions, report conflicts before writing, and recover or roll back changes through transactions.
@@ -63,6 +64,7 @@ The Skill is installed for every supported Agent by default. Repeat `--agent` to
 | [`doctor`](docs/commands/doctor.md) | Check local Agent history locations |
 | [`scan`](docs/commands/scan.md) | Update the AgentHist history library |
 | [`history`](docs/commands/history.md) | Browse, search, and organize sessions |
+| [`resume`](docs/commands/resume.md) | Continue a conversation with any supported Agent |
 | [`export`](docs/commands/export.md) | Create a `.agenthist` archive |
 | [`inspect`](docs/commands/inspect.md) | Inspect an exported archive |
 | [`import`](docs/commands/import.md) | Restore sessions or convert them to another Agent |
@@ -93,6 +95,18 @@ agenthist history show <session-ref>
 `scan` copies discovered history into AgentHist's local history library. Run it again whenever you want to add new or updated sessions.
 
 A `session-ref` is AgentHist's unique identifier for a source session, such as `ahsr1_codex_ck1_7d4c...`. Find it in `history list` or `history search` output.
+
+### Continue a conversation
+
+Browse recent conversations and choose which Agent should continue one:
+
+```bash
+agenthist resume
+agenthist resume --last
+agenthist resume --last --agent claude
+```
+
+The current workspace is shown first. Choosing the source Agent opens its native session; choosing another Agent previews the conversion before creating and opening the target session. See [`agenthist resume`](docs/commands/resume.md).
 
 ## 🔄 Migration and conversion
 

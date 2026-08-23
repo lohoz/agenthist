@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-
 import {
   AGENTS,
   DEFAULT_HISTORY_LIMIT,
@@ -50,6 +48,7 @@ import {
   type HumanField,
 } from "./human-output.js";
 import { withLiveStatus } from "./live-status.js";
+import { historySourceOptions } from "./source-options.js";
 import {
   displayWidth,
   padDisplay,
@@ -83,38 +82,6 @@ function sourceLocationLabel(role: string): string {
 
 function sourceStatusLabel(status: "ready" | "not_detected" | "blocked" | "error"): string {
   return status === "not_detected" ? "NOT DETECTED" : status.toUpperCase();
-}
-
-function historySourceOptions(
-  globals: GlobalOptions,
-  runtime: CliRuntime,
-  agents?: readonly Agent[],
-) {
-  const environment = runtime.environment ?? process.env;
-  const cwd = runtime.cwd ?? process.cwd();
-  const home = runtime.home ?? environment.HOME ?? homedir();
-  return {
-    ...(agents === undefined ? {} : { agents }),
-    codex: {
-      ...(globals.codexHome === undefined ? {} : { codexHome: globals.codexHome }),
-      ...(globals.sqliteHome === undefined ? {} : { sqliteHome: globals.sqliteHome }),
-      ...(globals.profile === undefined ? {} : { profile: globals.profile }),
-      environment, cwd, home,
-    },
-    opencode: {
-      ...(globals.opencodeDataRoot === undefined ? {} : { dataRoot: globals.opencodeDataRoot }),
-      ...(globals.opencodeDatabase === undefined ? {} : { databasePath: globals.opencodeDatabase }),
-      environment, cwd, home,
-    },
-    claude: {
-      ...(globals.claudeConfigRoot === undefined ? {} : { configRoot: globals.claudeConfigRoot }),
-      environment, cwd, home,
-    },
-    pi: {
-      ...(globals.piSessionRoot === undefined ? {} : { sessionRoot: globals.piSessionRoot }),
-      environment, cwd, home,
-    },
-  };
 }
 
 export async function runDoctor(

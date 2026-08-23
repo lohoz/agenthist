@@ -26,6 +26,7 @@ agenthist help <command>
 - Check detected history with \`agenthist doctor\`.
 - Refresh AgentHist's history pool with \`agenthist scan\`.
 - Find or organize conversations with \`agenthist history\`.
+- Continue a conversation with any supported Agent using \`agenthist resume\`.
 - Move or convert conversations with \`agenthist export\`, \`inspect\`, and \`import\`.
 - Rebind Codex history providers with \`agenthist codex provider\`.
 - Inspect or repair interrupted native writes with \`agenthist transaction\`.
@@ -66,6 +67,17 @@ agenthist history show <session-ref>
 
 Use \`history rename\`, \`tag\`, \`archive\`, \`unarchive\`, \`delete\`, or \`undelete\` to
 organize AgentHist's library view. These commands leave native Agent history unchanged.
+
+## Continue a conversation
+
+\`\`\`bash
+agenthist resume
+agenthist resume --last
+agenthist resume --last --agent claude
+\`\`\`
+
+The source Agent opens its native session. Another target Agent shows conversion impact before
+creating and opening a target session. AgentHist refreshes the target history after it exits.
 
 ## Export and inspect
 
@@ -152,8 +164,8 @@ const semantics = `${AGENTHIST_SKILL_MARKER}
 ## History pool and native history
 
 \`scan\` copies detected Agent history into AgentHist's local pool. Browsing and library organization
-operate on that pool. Export reads it. Import and Codex provider rebinding are the operations that
-write native Agent history.
+operate on that pool. Export reads it. Import, cross-Agent resume, and Codex provider rebinding are
+the operations that write native Agent history.
 
 AgentHist assigns a \`session-ref\` to each scanned conversation. Use the value shown by
 \`history list\`, \`history search\`, or \`inspect\` when a command needs an exact session selection;

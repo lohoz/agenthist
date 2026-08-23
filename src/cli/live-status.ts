@@ -91,7 +91,10 @@ class TerminalLiveStatus implements LiveStatus {
     const elapsed = `${seconds.toFixed(1)}s`;
     const plainPrefix = `${frame} `;
     const plainSuffix = ` · ${elapsed}`;
-    const width = Math.max(12, this.#output.columns ?? DEFAULT_WIDTH);
+    const reportedWidth = this.#output.columns;
+    const width = reportedWidth !== undefined && reportedWidth > 0
+      ? Math.max(12, reportedWidth)
+      : DEFAULT_WIDTH;
     const messageWidth = Math.max(1, width - displayWidth(plainPrefix) - displayWidth(plainSuffix));
     const message = truncateDisplay(this.#message, messageWidth);
     this.#output.write(

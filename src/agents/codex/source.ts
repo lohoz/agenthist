@@ -8,6 +8,7 @@ import { runtimePathContext } from "../../infrastructure/runtime-paths.js";
 
 const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
 const PROFILE_NAME = /^[A-Za-z0-9_-]+$/;
+const DEFAULT_PROVIDER = "openai";
 
 export interface CodexSourceOptions {
   readonly codexHome?: string;
@@ -127,7 +128,7 @@ export async function resolveCodexSource(options: CodexSourceOptions = {}): Prom
   const configuredPath = profileSQLite === undefined ? configPath : profileConfigPath!;
   const currentProvider = (
     profileConfigPath === undefined ? undefined : configuredProvider(profileConfig, profileConfigPath)
-  ) ?? configuredProvider(baseConfig, configPath) ?? "";
+  ) ?? configuredProvider(baseConfig, configPath) ?? DEFAULT_PROVIDER;
   const environmentSQLite = nonBlank(environment.CODEX_SQLITE_HOME);
   const sqliteHome = options.sqliteHome !== undefined
     ? resolveUserPath(options.sqliteHome, cwd, home)

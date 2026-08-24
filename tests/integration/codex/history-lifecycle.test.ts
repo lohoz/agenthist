@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 
+import { resolveCodexCurrentProvider } from "../../../src/application/provider-history.js";
 import { parseCodexRollout } from "../../../src/agents/codex/history/rollout.js";
 import { codexSessionRef } from "../../../src/agents/codex/identity.js";
 import { runCli, type CliRuntime } from "../../../src/cli/program.js";
@@ -177,6 +178,33 @@ interface SectionState {
   readonly name: string;
   readonly appearance: string | null;
 }
+
+test("Codex uses its built-in provider when config or model_provider is absent", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-codex-default-provider-"));
+  const codexHome = path.join(root, "codex");
+  const config = 'model = "gpt-5.4"\n';
+  try {
+    assert.equal(await resolveCodexCurrentProvider({
+      codexHome,
+      cwd: root,
+      home: root,
+      environment: {},
+    }), "openai");
+
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(path.join(codexHome, "config.toml"), config);
+
+    assert.equal(await resolveCodexCurrentProvider({
+      codexHome,
+      cwd: root,
+      home: root,
+      environment: {},
+    }), "openai");
+    assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), config);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function dynamicToolState(databasePath: string, threadId: string): DynamicToolState | undefined {
   const database = new DatabaseSync(databasePath, { readOnly: true });

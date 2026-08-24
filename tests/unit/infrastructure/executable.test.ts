@@ -9,26 +9,32 @@ import {
   resolveExecutable,
 } from "../../../src/infrastructure/executable.js";
 
-test("executable resolution follows PATH and requires an executable file on POSIX", async () => {
+test("executable resolution follows PATH on the host platform", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-executable-"));
   const bin = path.join(root, "bin");
-  const command = path.join(bin, "example-agent");
+  const windows = process.platform === "win32";
+  const command = path.join(bin, `example-agent${windows ? ".CMD" : ""}`);
+  const environment = windows
+    ? { Path: bin, PATHEXT: ".CMD" }
+    : { PATH: bin };
   try {
     await mkdir(bin);
     await writeFile(command, "#!/bin/sh\nexit 0\n");
-    await chmod(command, 0o755);
+    if (!windows) await chmod(command, 0o755);
     assert.equal(await resolveExecutable("example-agent", {
       cwd: root,
-      environment: { PATH: bin },
-      platform: "linux",
+      environment,
+      platform: process.platform,
     }), command);
 
-    await chmod(command, 0o644);
-    assert.equal(await resolveExecutable("example-agent", {
-      cwd: root,
-      environment: { PATH: bin },
-      platform: "linux",
-    }), undefined);
+    if (!windows) {
+      await chmod(command, 0o644);
+      assert.equal(await resolveExecutable("example-agent", {
+        cwd: root,
+        environment,
+        platform: process.platform,
+      }), undefined);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

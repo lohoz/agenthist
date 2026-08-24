@@ -258,6 +258,10 @@ npm link
 agenthist --help
 ```
 
+## 致谢
+
+感谢 [linuxdo 社区](https://linux.do/)的讨论、分享与反馈。
+
 ## License
 
 [MIT](LICENSE)

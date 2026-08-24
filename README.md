@@ -258,6 +258,10 @@ npm link
 agenthist --help
 ```
 
+## Acknowledgments
+
+Thanks to the [linuxdo community](https://linux.do/) for discussion, sharing, and feedback.
+
 ## License
 
 [MIT](LICENSE)

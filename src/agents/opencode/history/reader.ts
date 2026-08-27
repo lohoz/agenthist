@@ -1033,7 +1033,6 @@ export function readOpenCodeHistory(options: ReadOpenCodeHistoryOptions): ReadOp
     const pendingInputs = openCodePendingInputStatuses(database, schema);
     const reverts = openCodeRevertStatuses(database, schema);
     const sessionRows = rows(database, "SELECT * FROM session ORDER BY id");
-    if (sessionRows.length === 0) throw new Error("OpenCode has no persisted sessions");
     const messageRows = rows(database, "SELECT * FROM message ORDER BY session_id, time_created, id");
     const partRows = rows(database, "SELECT * FROM part ORDER BY session_id, time_created, id");
     const sessionMessageRows = persistedRows(database, schema, "session_message");

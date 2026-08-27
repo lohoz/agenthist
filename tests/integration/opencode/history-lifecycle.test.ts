@@ -261,6 +261,31 @@ function clearTarget(databasePath: string): void {
   database.close();
 }
 
+test("OpenCode scan accepts an initialized database before its first session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-opencode-empty-"));
+  const dataRoot = path.join(root, "xdg", "opencode");
+  const state = path.join(root, "state");
+  const databasePath = path.join(dataRoot, "opencode.db");
+  try {
+    await mkdir(dataRoot, { recursive: true });
+    createSource(databasePath);
+    clearTarget(databasePath);
+    const scanned = await runCli([
+      "--json", "--state-dir", state, "--opencode-data-root", dataRoot,
+      "scan", "--agent", "opencode",
+    ], { environment: { HOME: root }, cwd: root, home: root });
+    assert.equal(scanned.exitCode, 0, scanned.stderr);
+    const result = readScanResult(scanned.stdout, "opencode");
+    assert.equal(result.sessions, 0);
+    assert.deepEqual(
+      [result.agent.reusedSessions, result.agent.rebuiltSessions, result.agent.removedSessions],
+      [0, 0, 0],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("OpenCode scan preserves readable multi-session history without copying connection tables", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-opencode-"));
   const dataRoot = path.join(root, "xdg", "opencode");

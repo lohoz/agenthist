@@ -58,7 +58,7 @@ function createCodexDatabase(databasePath: string, rolloutPath?: string): void {
   database.close();
 }
 
-async function createCodexSource(home: string, sqliteHome: string): Promise<void> {
+async function createCodexSource(home: string, sqliteHome: string): Promise<string> {
   const relative = path.join(
     "sessions", "2026", "08", "09", `rollout-2026-08-09T05-00-00-${CODEX_ID}.jsonl`,
   );
@@ -92,6 +92,7 @@ async function createCodexSource(home: string, sqliteHome: string): Promise<void
   ];
   await writeFile(rolloutPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
   createCodexDatabase(path.join(sqliteHome, CODEX_STATE_STORE), rolloutPath);
+  return rolloutPath;
 }
 
 async function createClaudeSource(configRoot: string): Promise<void> {
@@ -361,7 +362,7 @@ test("local cross-Agent continuation reuses its stable target after the target h
   const targetClaude = path.join(root, "target-claude");
   const targetWork = path.join(root, "target-work");
   try {
-    await createCodexSource(sourceCodex, sourceSQLite);
+    const sourceRollout = await createCodexSource(sourceCodex, sourceSQLite);
     await mkdir(targetClaude, { recursive: true });
     await mkdir(targetWork, { recursive: true });
     const scanned = await runCli([
@@ -423,6 +424,43 @@ test("local cross-Agent continuation reuses its stable target after the target h
     assert.notEqual(existing, undefined);
     assert.equal(existing!.targetNativeId, target.targetNativeId);
     assert.equal(existing!.targetSessionRef, target.targetSessionRef);
+
+    await appendFile(sourceRollout, [
+      {
+        timestamp: "2026-08-09T05:00:04.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue the source conversation" }],
+        },
+      },
+      {
+        timestamp: "2026-08-09T05:00:05.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "This source revision needs a new converted target" }],
+        },
+      },
+    ].map((record) => JSON.stringify(record)).join("\n") + "\n");
+    const sourceDatabase = new DatabaseSync(path.join(sourceSQLite, CODEX_STATE_STORE));
+    sourceDatabase.prepare("UPDATE threads SET updated_at = ? WHERE id = ?").run(1786251605, CODEX_ID);
+    sourceDatabase.close();
+    const sourceRescan = await runCli([
+      "--json", "--state-dir", state,
+      "--codex-home", sourceCodex, "--codex-sqlite-home", sourceSQLite,
+      "scan", "--agent", "codex",
+    ], runtime);
+    assert.equal(sourceRescan.exitCode, 0, sourceRescan.stderr);
+
+    assert.equal(await findExistingHistoryTransfer(options), undefined);
+    const revised = await transferHistorySession({ ...options, mode: "apply" });
+    assert.equal(revised.written, 1);
+    assert.equal(revised.alreadyPresent, 0);
+    assert.notEqual(revised.items[0]!.targetNativeId, target.targetNativeId);
+    assert.notEqual(revised.items[0]!.targetSessionRef, target.targetSessionRef);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

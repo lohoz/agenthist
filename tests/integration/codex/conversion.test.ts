@@ -1200,7 +1200,7 @@ test("Codex portable context preserves tools and materializes closed replacement
     for (const code of [
       "codex.tool_history.degraded",
       "codex.tool_history.unprojectable",
-      "codex.compaction.unsupported",
+      "codex.compaction.skipped",
       "codex.inter_agent_communication.unsupported",
       "codex.thread_rollback.unsupported",
       "codex.turn_aborted.unsupported",

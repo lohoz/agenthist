@@ -2400,10 +2400,14 @@ async function parseCodexRolloutRange(
       throw new Error(`Codex fork metadata cannot be identified: ${filePath}`);
     }
     const matching = metadata.filter((value) => value.id === expectedId);
-    if (matching.length !== 1) {
+    // Recent Codex clients append a new session_meta record whenever a thread
+    // is resumed. These records all describe the same session id and are not
+    // fork metadata; retain the latest one. Keep rejecting mixed-id metadata,
+    // which still indicates an ambiguous copied fork.
+    if (matching.length === 0 || (matching.length > 1 && metadata.some((value) => value.id !== expectedId))) {
       throw new Error(`Codex fork metadata is ambiguous: ${filePath}`);
     }
-    selected = matching[0]!;
+    selected = matching[matching.length - 1]!;
   }
   if (filenameId !== undefined && selected.id !== filenameId) {
     throw new Error(`Codex rollout filename and session ID disagree: ${filePath}`);

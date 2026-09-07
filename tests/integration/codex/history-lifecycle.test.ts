@@ -294,6 +294,21 @@ async function assertImportedCopiedSubagent(childPath: string, provider: string,
   assert.equal(metadata[1]!.payload.cwd, "/work/archive");
 }
 
+test("Codex rollout accepts repeated session metadata from resumed threads", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-codex-meta-"));
+  try {
+    const file = path.join(root, "rollout-2026-08-09T01-00-00-abcdef01-2345-4abc-8def-0123456789ab.jsonl");
+    const first = rollout(activeId, "first", "answer", "/work/old", [], { model: "old-model" });
+    const second = rollout(activeId, "second", "answer", "/work/new", [], { model: "new-model" });
+    await writeFile(file, first + second);
+    const parsed = await parseCodexRollout(file);
+    assert.equal(parsed.sessionId, activeId);
+    assert.equal(parsed.cwd, "/work/new");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function mutate(
   state: string,
   runtime: CliRuntime,

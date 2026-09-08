@@ -356,7 +356,14 @@ function normalizeCodexPortableContext(
       count: externalSessionImportMarkers,
     });
   }
-  if (compaction !== 0) findings.push(blocked("codex.compaction.unsupported", compaction));
+  // Codex compaction markers are metadata boundaries. They cannot always be
+  // represented in the portable conversation, but dropping the marker does
+  // not make the remainder of the conversation unsafe to import. Treat them
+  // as lossy/skipped content rather than a hard blocker so long sessions can
+  // still be transferred.
+  if (compaction !== 0) {
+    findings.push({ code: "codex.compaction.skipped", disposition: "skipped", count: compaction });
+  }
   if (worldState !== 0) {
     findings.push({ code: "codex.world_state.skipped", disposition: "skipped", count: worldState });
   }

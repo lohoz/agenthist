@@ -14,6 +14,7 @@ const INCOMPLETE_TOOL_ID = "55555555-5555-4555-8555-555555555555";
 const COMPACTED_ID = "66666666-6666-4666-8666-666666666666";
 const AGENT_PARENT_ID = "77777777-7777-4777-8777-777777777777";
 const AGENT_CHILD_ID = "88888888-8888-4888-8888-888888888888";
+const COMPACTION_MARKER_ID = "99999999-9999-4999-8999-999999999999";
 const AGENT_CHILD_PATH = "/root/researcher";
 const AGENT_INHERITED_PROMPT = "Retain the parent research constraint for the child model";
 const AGENT_INHERITED_ANSWER = "The parent constraint is available in inherited model context";
@@ -657,6 +658,26 @@ function compactedRollout(): string {
   return `${base}${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
 }
 
+function compactionMarkerRollout(): string {
+  const base = rollout(
+    COMPACTION_MARKER_ID,
+    "Keep the readable history around the compaction marker",
+    "The readable history remains available",
+    "none",
+    { minute: "35" },
+  );
+  const marker = {
+    timestamp: "2026-08-09T03:35:04.000Z",
+    type: "response_item",
+    payload: {
+      type: "compaction",
+      id: "cmp_marker_only_fixture",
+      encrypted_content: "opaque compaction marker",
+    },
+  };
+  return `${base}${JSON.stringify(marker)}\n`;
+}
+
 function agentEnvelope(
   type: "NEW_TASK" | "FINAL_ANSWER",
   recipient: string,
@@ -902,6 +923,9 @@ test("Codex portable context preserves tools and materializes closed replacement
   const compactedRelative = path.join(
     "sessions", "2026", "08", "09", `rollout-2026-08-09T03-30-00-${COMPACTED_ID}.jsonl`,
   );
+  const compactionMarkerRelative = path.join(
+    "sessions", "2026", "08", "09", `rollout-2026-08-09T03-35-00-${COMPACTION_MARKER_ID}.jsonl`,
+  );
   const agentParentRelative = path.join(
     "sessions", "2026", "08", "09", `rollout-2026-08-09T03-40-00-${AGENT_PARENT_ID}.jsonl`,
   );
@@ -1040,6 +1064,7 @@ test("Codex portable context preserves tools and materializes closed replacement
       `${incompleteRollout}${nativeControlRecords.map((record) => JSON.stringify(record)).join("\n")}\n`,
     );
     await writeFile(path.join(codexHome, compactedRelative), compactedRollout());
+    await writeFile(path.join(codexHome, compactionMarkerRelative), compactionMarkerRollout());
     await writeFile(path.join(codexHome, agentParentRelative), parentAgentRollout());
     await writeFile(path.join(codexHome, agentChildRelative), childAgentRollout());
     createThreadDatabase(path.join(sqliteHome, "state_5.sqlite"), [
@@ -1054,6 +1079,11 @@ test("Codex portable context preserves tools and materializes closed replacement
         id: COMPACTED_ID,
         rolloutPath: path.join(codexHome, compactedRelative),
         title: "Compacted portable conversation",
+      },
+      {
+        id: COMPACTION_MARKER_ID,
+        rolloutPath: path.join(codexHome, compactionMarkerRelative),
+        title: "Compaction marker conversation",
       },
       {
         id: AGENT_PARENT_ID,
@@ -1087,6 +1117,8 @@ test("Codex portable context preserves tools and materializes closed replacement
     const toolRef = sessions.find((session) => session.title === "Closed tool conversation")!.session_ref;
     const compactedRef = sessions.find((session) =>
       session.title === "Compacted portable conversation")!.session_ref;
+    const compactionMarkerRef = sessions.find((session) =>
+      session.title === "Compaction marker conversation")!.session_ref;
     const agentParentRef = sessions.find((session) => session.title === "Agent parent conversation")!.session_ref;
     const agentChildRef = sessions.find((session) =>
       session.title === "Agent child private conversation")!.session_ref;
@@ -1155,6 +1187,13 @@ test("Codex portable context preserves tools and materializes closed replacement
     assert.equal(compactedExported.exitCode, 0, compactedExported.stderr);
     const openArchive = compactedClaudeArchive;
 
+    const compactionMarkerArchive = path.join(root, "codex-compaction-marker-to-claude.agenthist");
+    const compactionMarkerExported = await runCli([
+      "--json", "--state-dir", sourceState,
+      "export", "--agent", "codex", "--session", compactionMarkerRef, "-o", compactionMarkerArchive,
+    ], runtime);
+    assert.equal(compactionMarkerExported.exitCode, 0, compactionMarkerExported.stderr);
+
     const agentPairArchive = path.join(root, "codex-agent-pair-to-claude.agenthist");
     const agentPairExported = await runCli([
       "--json", "--state-dir", sourceState,
@@ -1200,7 +1239,7 @@ test("Codex portable context preserves tools and materializes closed replacement
     for (const code of [
       "codex.tool_history.degraded",
       "codex.tool_history.unprojectable",
-      "codex.compaction.unsupported",
+      "codex.compaction.skipped",
       "codex.inter_agent_communication.unsupported",
       "codex.thread_rollback.unsupported",
       "codex.turn_aborted.unsupported",
@@ -1449,6 +1488,40 @@ test("Codex portable context preserves tools and materializes closed replacement
       compactedClaudeHistory,
       /PRE_COMPACTION_|superseded opaque compaction|Use the compacted result|available for continued work/,
     );
+
+    const compactionMarkerArguments = [
+      "--json", "--state-dir", targetState,
+      "import", compactionMarkerArchive, "--agent", "codex", "--to", "claude",
+      "--target", `claude=${targetConfig}`,
+      "--map-path", `/source/work=${targetWork}`,
+    ];
+    const compactionMarkerPlan = await runCli([...compactionMarkerArguments, "--dry-run"], runtime);
+    assert.equal(compactionMarkerPlan.exitCode, 0, compactionMarkerPlan.stderr);
+    const compactionMarkerPlanData = (JSON.parse(compactionMarkerPlan.stdout) as {
+      data: {
+        routes: Array<{ quality: string }>;
+        items: Array<{
+          source_session_ref: string;
+          target_session_ref: string;
+          findings: Array<{ code: string; count: number }>;
+        }>;
+      };
+    }).data;
+    assert.equal(compactionMarkerPlanData.routes[0]!.quality, "degraded");
+    const compactionMarkerItem = compactionMarkerPlanData.items.find((item) =>
+      item.source_session_ref === compactionMarkerRef)!;
+    assert.equal(compactionMarkerItem.findings.some((finding) =>
+      finding.code === "codex.compaction.skipped" && finding.count === 1), true);
+    const compactionMarkerImported = await runCli([...compactionMarkerArguments, "--apply"], runtime);
+    assert.equal(compactionMarkerImported.exitCode, 0, compactionMarkerImported.stderr);
+    const compactionMarkerShow = await runCli([
+      "--json", "--state-dir", targetState, "history", "show", compactionMarkerItem.target_session_ref,
+    ], runtime);
+    assert.equal(compactionMarkerShow.exitCode, 0, compactionMarkerShow.stderr);
+    const compactionMarkerHistory = conversationText(compactionMarkerShow.stdout);
+    assert.match(compactionMarkerHistory, /Keep the readable history around the compaction marker/);
+    assert.match(compactionMarkerHistory, /The readable history remains available/);
+    assert.doesNotMatch(compactionMarkerHistory, /opaque compaction marker/);
 
     const agentPairArguments = [
       "--json", "--state-dir", targetState,

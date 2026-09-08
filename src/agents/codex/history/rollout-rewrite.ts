@@ -22,6 +22,22 @@ export interface CodexMetadataRewrite {
 
 export interface CodexMetadataRewriteResult {
   readonly byteOffsetDelta: number;
+  readonly offsetChanges: readonly {
+    readonly sourceEndByteOffset: number;
+    readonly cumulativeDelta: number;
+  }[];
+}
+
+export function projectCodexMetadataByteOffset(
+  rewrite: CodexMetadataRewriteResult,
+  sourceEndByteOffset: number,
+): number {
+  let delta = 0;
+  for (const change of rewrite.offsetChanges) {
+    if (change.sourceEndByteOffset > sourceEndByteOffset) break;
+    delta = change.cumulativeDelta;
+  }
+  return sourceEndByteOffset + delta;
 }
 
 interface Span {
@@ -121,18 +137,24 @@ function objectMember(value: string, wanted: string): Span {
   }
 }
 
-function patchMetadata(record: string, rewrite: CodexMetadataRewrite): string {
+function patchMetadata(
+  record: string,
+  rewrite: CodexMetadataRewrite,
+  canonicalRecord: boolean,
+): { readonly rendered: string; readonly provider: string; readonly cwd: string } {
   const payload = objectMember(record, "payload");
   const payloadValue = record.slice(payload.start, payload.end);
   const replacements: Array<{ readonly start: number; readonly end: number; readonly value: string }> = [];
   for (const field of [
-    { name: "model_provider", before: rewrite.beforeProvider, after: rewrite.afterProvider },
-    { name: "cwd", before: rewrite.beforeCwd, after: rewrite.afterCwd },
+    { name: "model_provider", after: rewrite.afterProvider },
+    { name: "cwd", after: rewrite.afterCwd },
   ]) {
     const span = objectMember(payloadValue, field.name);
     const current = JSON.parse(payloadValue.slice(span.start, span.end)) as unknown;
-    if (current !== field.before) throw new Error(`Codex metadata ${field.name} changed before rewrite`);
-    if (field.before !== field.after) {
+    if (typeof current !== "string" || current === "") {
+      throw new Error(`Codex metadata ${field.name} is invalid during rewrite`);
+    }
+    if (current !== field.after) {
       replacements.push({
         start: payload.start + span.start,
         end: payload.start + span.end,
@@ -146,15 +168,18 @@ function patchMetadata(record: string, rewrite: CodexMetadataRewrite): string {
     const current = JSON.parse(historyValue) as unknown;
     const before = rewrite.historyBase.before;
     const after = rewrite.historyBase.after;
+    const currentBase = current as Record<string, unknown>;
+    const currentOffset = currentBase?.end_byte_offset;
     if (
       current === null || typeof current !== "object" || Array.isArray(current) ||
-      (current as Record<string, unknown>).thread_id !== before.threadId ||
-      (current as Record<string, unknown>).end_ordinal_exclusive !== before.endOrdinalExclusive ||
-      (current as Record<string, unknown>).end_byte_offset !== before.endByteOffset ||
+      currentBase.thread_id !== before.threadId ||
+      currentBase.end_ordinal_exclusive !== before.endOrdinalExclusive ||
+      typeof currentOffset !== "number" || !Number.isSafeInteger(currentOffset) || currentOffset <= 0 ||
+      (canonicalRecord && currentOffset !== before.endByteOffset) ||
       after.threadId !== before.threadId || after.endOrdinalExclusive !== before.endOrdinalExclusive ||
       !Number.isSafeInteger(after.endByteOffset) || after.endByteOffset <= 0
     ) throw new Error("Codex metadata history_base changed before rewrite");
-    if (after.endByteOffset !== before.endByteOffset) {
+    if (currentOffset !== after.endByteOffset) {
       const offsetSpan = objectMember(historyValue, "end_byte_offset");
       replacements.push({
         start: payload.start + historySpan.start + offsetSpan.start,
@@ -169,7 +194,13 @@ function patchMetadata(record: string, rewrite: CodexMetadataRewrite): string {
     result = result.slice(0, replacement.start) + replacement.value + result.slice(replacement.end);
   }
   JSON.parse(result);
-  return result;
+  const providerSpan = objectMember(payloadValue, "model_provider");
+  const cwdSpan = objectMember(payloadValue, "cwd");
+  return {
+    rendered: result,
+    provider: JSON.parse(payloadValue.slice(providerSpan.start, providerSpan.end)) as string,
+    cwd: JSON.parse(payloadValue.slice(cwdSpan.start, cwdSpan.end)) as string,
+  };
 }
 
 function metadataId(payload: Record<string, unknown>): string {
@@ -207,9 +238,14 @@ export async function rewriteCodexMetadata(
   const output = await open(outputPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let metadataRecords = 0;
-  let matchingRecords = 0;
-  let byteOffsetDelta = 0;
+  let canonicalRecordRewritten = false;
+  let sourceByteOffset = 0;
+  let cumulativeDelta = 0;
+  const offsetChanges: Array<{ readonly sourceEndByteOffset: number; readonly cumulativeDelta: number }> = [];
+  let effectiveProvider = "";
+  let effectiveCwd = "";
   const processLine = async (raw: Buffer): Promise<void> => {
+    const sourceEndByteOffset = sourceByteOffset + raw.byteLength;
     const hasNewline = raw.byteLength > 0 && raw[raw.byteLength - 1] === 0x0a;
     const line = hasNewline ? raw.subarray(0, raw.byteLength - 1) : raw;
     if (line.byteLength > MAX_RECORD_BYTES) throw new Error("Codex rollout record is too large during rewrite");
@@ -232,17 +268,27 @@ export async function rewriteCodexMetadata(
           throw new Error("Codex session metadata is invalid during rewrite");
         }
         const id = metadataId(payload as Record<string, unknown>);
+        if (metadataRecords === 1 && id !== rewrite.nativeId) {
+          throw new Error("Codex canonical session metadata identity changed before rewrite");
+        }
         if (id === rewrite.nativeId) {
-          if (metadataRecords !== 1 || ++matchingRecords !== 1) {
-            throw new Error("Codex target session metadata is ambiguous during rewrite");
-          }
-          const patched = Buffer.from(patchMetadata(record, rewrite), "utf8");
+          const patchedMetadata = patchMetadata(record, rewrite, metadataRecords === 1);
+          effectiveProvider = patchedMetadata.provider;
+          effectiveCwd = patchedMetadata.cwd;
+          const patched = Buffer.from(patchedMetadata.rendered, "utf8");
           rendered = Buffer.concat([line.subarray(0, start), patched, line.subarray(end)]);
-          byteOffsetDelta = rendered.byteLength - line.byteLength;
+          canonicalRecordRewritten = true;
         }
       }
     }
-    await writeAll(output, hasNewline ? Buffer.concat([rendered, Buffer.from("\n")]) : rendered);
+    const renderedRaw = hasNewline ? Buffer.concat([rendered, Buffer.from("\n")]) : rendered;
+    const delta = renderedRaw.byteLength - raw.byteLength;
+    if (delta !== 0) {
+      cumulativeDelta += delta;
+      offsetChanges.push({ sourceEndByteOffset, cumulativeDelta });
+    }
+    await writeAll(output, renderedRaw);
+    sourceByteOffset = sourceEndByteOffset;
   };
   try {
     for await (const rawChunk of input) {
@@ -257,8 +303,11 @@ export async function rewriteCodexMetadata(
       if (pending.byteLength > MAX_RECORD_BYTES + 1) throw new Error("Codex rollout record is too large during rewrite");
     }
     if (pending.byteLength > 0) await processLine(pending);
-    if (matchingRecords !== 1) {
-      throw new Error("Codex rollout has no unique metadata record to rewrite");
+    if (!canonicalRecordRewritten) {
+      throw new Error("Codex rollout has no canonical metadata record to rewrite");
+    }
+    if (effectiveProvider !== rewrite.beforeProvider || effectiveCwd !== rewrite.beforeCwd) {
+      throw new Error("Codex effective session metadata changed before rewrite");
     }
     await output.sync();
   } catch (error) {
@@ -279,5 +328,5 @@ export async function rewriteCodexMetadata(
     await rm(outputPath, { force: true });
     throw new Error("Codex rollout rewrite verification failed");
   }
-  return { byteOffsetDelta };
+  return { byteOffsetDelta: cumulativeDelta, offsetChanges };
 }

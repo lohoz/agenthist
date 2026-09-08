@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveCodexCurrentProvider } from "../../../src/application/provider-history.js";
+import {
+  projectCodexMetadataByteOffset,
+  rewriteCodexMetadata,
+} from "../../../src/agents/codex/history/rollout-rewrite.js";
 import { parseCodexRollout } from "../../../src/agents/codex/history/rollout.js";
 import { codexSessionRef } from "../../../src/agents/codex/identity.js";
 import { runCli, type CliRuntime } from "../../../src/cli/program.js";
@@ -66,6 +70,30 @@ function rollout(
     }),
     "",
   ].join("\n");
+}
+
+function appendRepeatedSessionMetadata(
+  value: string,
+  overrides: Readonly<Record<string, unknown>> = {},
+): string {
+  const records = value.trimEnd().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+  const canonical = records.find((record) => record.type === "session_meta");
+  const payload = canonical?.payload;
+  if (canonical === undefined || payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Codex fixture has no canonical session metadata");
+  }
+  const finalOrdinal = records.at(-1)?.ordinal;
+  const repeated = {
+    ...canonical,
+    timestamp: "2026-08-09T01:00:03Z",
+    ...(typeof finalOrdinal === "number" ? { ordinal: finalOrdinal + 1 } : {}),
+    payload: {
+      ...(payload as Record<string, unknown>),
+      timestamp: "2026-08-09T01:00:03Z",
+      ...overrides,
+    },
+  };
+  return `${value}${JSON.stringify(repeated)}\n`;
 }
 
 function copiedSubagentRollout(): string {
@@ -294,6 +322,87 @@ async function assertImportedCopiedSubagent(childPath: string, provider: string,
   assert.equal(metadata[1]!.payload.cwd, "/work/archive");
 }
 
+async function matchingMetadata(
+  rolloutPath: string,
+  nativeId: string,
+): Promise<Array<Record<string, unknown>>> {
+  return (await readFile(rolloutPath, "utf8")).trimEnd().split("\n")
+    .map((line) => JSON.parse(line) as { type: string; payload: Record<string, unknown> })
+    .filter((record) => record.type === "session_meta" && record.payload.id === nativeId)
+    .map((record) => record.payload);
+}
+
+test("Codex accepts repeated session metadata from resumed threads", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-codex-meta-resume-"));
+  try {
+    const file = path.join(root, `rollout-2026-08-09T01-00-00-${activeId}.jsonl`);
+    const first = rollout(activeId, "first", "first answer", "/work/old", [], { model: "old-model" });
+    const resumed = rollout(activeId, "second", "second answer", "/work/new", [], { model: "new-model" });
+    await writeFile(file, first + resumed);
+    const parsed = await parseCodexRollout(file);
+    assert.equal(parsed.sessionId, activeId);
+    assert.equal(parsed.cwd, "/work/new");
+    assert.equal(parsed.model, "new-model");
+    assert.match(JSON.stringify(parsed.conversation), /first.*second/s);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex rejects repeated canonical metadata with conflicting lineage", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-codex-meta-"));
+  try {
+    const file = path.join(root, `rollout-2026-08-09T01-00-00-${activeId}.jsonl`);
+    const value = appendRepeatedSessionMetadata(
+      rollout(activeId, "first", "answer"),
+      { session_id: archivedId, parent_thread_id: archivedId },
+    );
+    await writeFile(file, value);
+    await assert.rejects(
+      parseCodexRollout(file),
+      /repeated session metadata conflicts with its canonical record/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex projects repeated metadata rewrites at their source positions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-codex-meta-rewrite-"));
+  try {
+    const source = path.join(root, `rollout-2026-08-09T01-00-00-${activeId}.jsonl`);
+    const output = path.join(root, "rewritten.jsonl");
+    const prefix = rollout(activeId, "first", "answer");
+    const value = appendRepeatedSessionMetadata(prefix, {
+      cwd: "/work/resumed",
+      model_provider: "resumed-provider",
+      model: "resumed-model",
+    });
+    await writeFile(source, value);
+    const rewritten = await rewriteCodexMetadata(source, output, {
+      nativeId: activeId,
+      beforeProvider: "resumed-provider",
+      afterProvider: "openai",
+      beforeCwd: "/work/resumed",
+      afterCwd: "/target/resumed-workspace",
+    });
+    const rendered = await readFile(output, "utf8");
+    const finalLine = `${rendered.trimEnd().split("\n").at(-1)!}\n`;
+    const renderedPrefixBytes = Buffer.byteLength(rendered) - Buffer.byteLength(finalLine);
+    assert.equal(
+      projectCodexMetadataByteOffset(rewritten, Buffer.byteLength(prefix)),
+      renderedPrefixBytes,
+    );
+    assert.notEqual(rewritten.byteOffsetDelta, renderedPrefixBytes - Buffer.byteLength(prefix));
+    const parsed = await parseCodexRollout(output);
+    assert.equal(parsed.cwd, "/target/resumed-workspace");
+    assert.equal(parsed.provider, "openai");
+    assert.equal(parsed.model, "resumed-model");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function mutate(
   state: string,
   runtime: CliRuntime,
@@ -351,7 +460,7 @@ test("Codex scan remains listable, searchable, and readable after the native sou
       [],
       { history_mode: "paginated", model_provider: "receiver-provider" },
     );
-    const activeRollout = rollout(
+    const activeRollout = appendRepeatedSessionMetadata(rollout(
       activeId,
       "科研场景的重复约束",
       "Keep the raw bytes.",
@@ -366,7 +475,7 @@ test("Codex scan remains listable, searchable, and readable after the native sou
       {
         history_mode: "paginated",
         session_id: archivedId,
-        model_provider: "unified-provider",
+        model_provider: "initial-provider",
         forked_from_id: archivedId,
         parent_thread_id: archivedId,
         history_base: {
@@ -375,10 +484,15 @@ test("Codex scan remains listable, searchable, and readable after the native sou
           end_byte_offset: Buffer.byteLength(archivedRollout),
         },
       },
-    );
+    ), { cwd: "/work/resumed", model_provider: "unified-provider", model: "resumed-model" });
     await writeFile(path.join(home, activeRelative), activeRollout);
     await writeFile(path.join(home, archivedRelative), archivedRollout);
     await writeFile(path.join(home, copiedChildRelative), copiedSubagentRollout());
+    const repeatedParsed = await parseCodexRollout(path.join(home, activeRelative));
+    assert.equal(repeatedParsed.cwd, "/work/resumed");
+    assert.equal(repeatedParsed.provider, "unified-provider");
+    assert.equal(repeatedParsed.model, "resumed-model");
+    assert.equal((repeatedParsed.nativeSummary as { metadataRecords: number }).metadataRecords, 2);
 
     const database = new DatabaseSync(path.join(sqliteHome, CODEX_STATE_STORE));
     database.exec(`
@@ -427,7 +541,7 @@ test("Codex scan remains listable, searchable, and readable after the native sou
          first_user_message, model, thread_section_id, section_position, section_entered_at_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    insert.run(activeId, path.join(home, activeRelative), 1786237200, 1786237202, "unified-provider", "/work/agenthist", "Active title", 0, "科研场景的重复约束", "gpt-5.4", sectionId, 1_000_000, 1_786_237_200_000);
+    insert.run(activeId, path.join(home, activeRelative), 1786237200, 1786237202, "unified-provider", "/work/resumed", "Active title", 0, "科研场景的重复约束", "resumed-model", sectionId, 1_000_000, 1_786_237_200_000);
     insert.run(archivedId, path.join(home, archivedRelative), 1786240800, 1786240802, "receiver-provider", "/work/archive", "Archived title", 1, "Archived question", "gpt-5.4", sectionId, 2_000_000, 1_786_240_800_000);
     insert.run(copiedChildId, path.join(home, copiedChildRelative), 1786244400, 1786244402, "receiver-provider", "/work/copied-child", "Copied child title", 0, "Copied child question", "gpt-5.4", null, null, null);
     insert.run(missingRolloutId, path.join(home, "sessions", "missing.jsonl"), 1786244400, 1786244402, "unified-provider", "/work/missing", "Missing rollout title", 0, "Missing rollout question", "gpt-5.4", null, null, null);
@@ -824,7 +938,7 @@ test("Codex scan remains listable, searchable, and readable after the native sou
     `);
     targetGoals.close();
     const targetWork = path.join(root, "target-work");
-    await mkdir(path.join(targetWork, "agenthist"), { recursive: true });
+    await mkdir(path.join(targetWork, "resumed"), { recursive: true });
     await mkdir(path.join(targetWork, "archive"), { recursive: true });
     await mkdir(path.join(targetWork, "copied-child"), { recursive: true });
     const commonImportArguments = [
@@ -892,6 +1006,15 @@ test("Codex scan remains listable, searchable, and readable after the native sou
       appearance: "blue",
     });
     await assertLineageBoundary(path.join(targetHome, activeRelative), path.join(targetHome, archivedRelative));
+    const importedActive = await parseCodexRollout(path.join(targetHome, activeRelative));
+    assert.equal(importedActive.cwd, path.join(targetWork, "resumed"));
+    assert.equal(importedActive.provider, "unified-provider");
+    assert.equal(importedActive.model, "resumed-model");
+    assert.equal((importedActive.nativeSummary as { metadataRecords: number }).metadataRecords, 2);
+    const importedMetadata = await matchingMetadata(path.join(targetHome, activeRelative), activeId);
+    assert.equal(importedMetadata.length, 2);
+    assert.equal(importedMetadata.every((metadata) => metadata.cwd === path.join(targetWork, "resumed")), true);
+    assert.equal(importedMetadata.every((metadata) => metadata.model_provider === "unified-provider"), true);
     await assertImportedCopiedSubagent(
       path.join(targetHome, copiedChildRelative),
       "receiver-provider",
@@ -986,6 +1109,11 @@ test("Codex scan remains listable, searchable, and readable after the native sou
     assert.equal(unifyData.changed, 3);
     assert.match(unifyData.transaction_ref, /^ahtx1_/);
     await assertLineageBoundary(path.join(targetHome, activeRelative), path.join(targetHome, archivedRelative));
+    const unifiedActive = await parseCodexRollout(path.join(targetHome, activeRelative));
+    assert.equal(unifiedActive.provider, "openai");
+    assert.equal(unifiedActive.cwd, path.join(targetWork, "resumed"));
+    const unifiedMetadata = await matchingMetadata(path.join(targetHome, activeRelative), activeId);
+    assert.equal(unifiedMetadata.every((metadata) => metadata.model_provider === "openai"), true);
     await assertImportedCopiedSubagent(
       path.join(targetHome, copiedChildRelative),
       "openai",

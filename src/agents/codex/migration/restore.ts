@@ -25,7 +25,11 @@ import type { CodexHistoryBase } from "../history/rollout.js";
 import { scanCodex } from "../scan.js";
 import { resolveCodexSource, type CodexSourceOptions } from "../source.js";
 import { requireCodexStateStore } from "../storage/stores.js";
-import { rewriteCodexMetadata } from "../history/rollout-rewrite.js";
+import {
+  projectCodexMetadataByteOffset,
+  rewriteCodexMetadata,
+  type CodexMetadataRewriteResult,
+} from "../history/rollout-rewrite.js";
 import {
   inspectThreadSchema,
   readThreadDynamicTools,
@@ -177,7 +181,7 @@ async function buildRestorePlan(options: RestoreCodexOptions): Promise<RestorePl
   const destinationSet = new Set<string>();
   const planned: PlannedItem[] = [];
   const workingDirectories = new Map<string, string>();
-  const byteOffsetDeltas = new Map<string, number>();
+  const metadataRewrites = new Map<string, CodexMetadataRewriteResult>();
   try {
     const columns = inspectThreadSchema(database);
     const goalColumns = goalDatabase === undefined ? undefined : inspectThreadGoalSchema(goalDatabase);
@@ -202,9 +206,9 @@ async function buildRestorePlan(options: RestoreCodexOptions): Promise<RestorePl
       const lineage = readCodexLineage(entry);
       let projectedHistoryBase: CodexHistoryBase | undefined;
       if (lineage.historyBase !== null) {
-        const baseDelta = byteOffsetDeltas.get(lineage.historyBase.threadId);
-        if (baseDelta === undefined) throw new Error(`Codex history base was not projected first: ${entry.sessionRef}`);
-        const endByteOffset = lineage.historyBase.endByteOffset + baseDelta;
+        const baseRewrite = metadataRewrites.get(lineage.historyBase.threadId);
+        if (baseRewrite === undefined) throw new Error(`Codex history base was not projected first: ${entry.sessionRef}`);
+        const endByteOffset = projectCodexMetadataByteOffset(baseRewrite, lineage.historyBase.endByteOffset);
         if (!Number.isSafeInteger(endByteOffset) || endByteOffset <= 0) {
           throw new Error(`Codex projected history base is invalid: ${entry.sessionRef}`);
         }
@@ -226,9 +230,9 @@ async function buildRestorePlan(options: RestoreCodexOptions): Promise<RestorePl
             ? {}
             : { historyBase: { before: lineage.historyBase, after: projectedHistoryBase } }),
         });
-        byteOffsetDeltas.set(entry.nativeId, rewritten.byteOffsetDelta);
+        metadataRewrites.set(entry.nativeId, rewritten);
       } else {
-        byteOffsetDeltas.set(entry.nativeId, 0);
+        metadataRewrites.set(entry.nativeId, { byteOffsetDelta: 0, offsetChanges: [] });
       }
       const thread = targetThread(entry, columns);
       thread.id = entry.nativeId;

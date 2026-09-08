@@ -18,7 +18,11 @@ import {
 } from "./storage/database.js";
 import { codexSessionRef } from "./identity.js";
 import { parseCodexRollout, type ParsedCodexRollout } from "./history/rollout.js";
-import { rewriteCodexMetadata } from "./history/rollout-rewrite.js";
+import {
+  projectCodexMetadataByteOffset,
+  rewriteCodexMetadata,
+  type CodexMetadataRewriteResult,
+} from "./history/rollout-rewrite.js";
 import { resolveCodexSource, type CodexSource, type CodexSourceOptions } from "./source.js";
 import { requireCodexStateStore } from "./storage/stores.js";
 import { executePreparedCodexTransaction, prepareCodexTransaction, type PreparedCodexEffect } from "./migration/transaction.js";
@@ -246,7 +250,7 @@ async function buildUnifyPlan(
   const target = targetProvider(requested, inventory.source);
   const changes: CodexProviderChange[] = [];
   const effects: PreparedCodexEffect[] = [];
-  const byteOffsetDeltas = new Map<string, number>();
+  const metadataRewrites = new Map<string, CodexMetadataRewriteResult>();
   const byNativeId = new Map(inventory.sessions.map((session) => [session.nativeId, session]));
   let unchanged = 0;
   for (const [index, session] of orderProviderLineage(inventory.sessions).entries()) {
@@ -261,9 +265,9 @@ async function buildUnifyPlan(
         base.parsed.metadataEndByteOffset,
         session.sessionRef,
       );
-      const baseDelta = byteOffsetDeltas.get(beforeHistoryBase.threadId);
-      if (baseDelta === undefined) throw new Error(`Codex history base was not projected first: ${session.sessionRef}`);
-      const endByteOffset = beforeHistoryBase.endByteOffset + baseDelta;
+      const baseRewrite = metadataRewrites.get(beforeHistoryBase.threadId);
+      if (baseRewrite === undefined) throw new Error(`Codex history base was not projected first: ${session.sessionRef}`);
+      const endByteOffset = projectCodexMetadataByteOffset(baseRewrite, beforeHistoryBase.endByteOffset);
       if (!Number.isSafeInteger(endByteOffset) || endByteOffset <= 0) {
         throw new Error(`Codex projected history base is invalid: ${session.sessionRef}`);
       }
@@ -280,7 +284,7 @@ async function buildUnifyPlan(
     } else unchanged++;
     const historyBaseChanged = beforeHistoryBase?.endByteOffset !== afterHistoryBase?.endByteOffset;
     if (!providerChanged && !historyBaseChanged) {
-      byteOffsetDeltas.set(session.nativeId, 0);
+      metadataRewrites.set(session.nativeId, { byteOffsetDelta: 0, offsetChanges: [] });
       continue;
     }
     const afterPath = path.join(workspace, `provider-${index.toString().padStart(6, "0")}.jsonl`);
@@ -294,7 +298,7 @@ async function buildUnifyPlan(
         ? {}
         : { historyBase: { before: beforeHistoryBase, after: afterHistoryBase } }),
     });
-    byteOffsetDeltas.set(session.nativeId, rewritten.byteOffsetDelta);
+    metadataRewrites.set(session.nativeId, rewritten);
     const afterRow = { ...session.thread, model_provider: target };
     effects.push({
       sessionRef: session.sessionRef,

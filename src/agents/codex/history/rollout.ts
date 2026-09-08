@@ -975,6 +975,23 @@ function parseMetadata(payload: Record<string, unknown>): Omit<SessionMetadata, 
   };
 }
 
+function sameHistoryBase(left: CodexHistoryBase | undefined, right: CodexHistoryBase | undefined): boolean {
+  return left === undefined
+    ? right === undefined
+    : right !== undefined &&
+      left.threadId === right.threadId &&
+      left.endOrdinalExclusive === right.endOrdinalExclusive;
+}
+
+function sameMetadataStructure(left: SessionMetadata, right: SessionMetadata): boolean {
+  return left.sessionId === right.sessionId &&
+    left.historyMode === right.historyMode &&
+    left.subagentHistoryStartOrdinal === right.subagentHistoryStartOrdinal &&
+    left.forkedFromId === right.forkedFromId &&
+    left.parentThreadId === right.parentThreadId &&
+    sameHistoryBase(left.historyBase, right.historyBase);
+}
+
 function localInputMediaResource(
   content: readonly unknown[],
   index: number,
@@ -1915,7 +1932,7 @@ async function parseCodexRolloutRange(
   let projectionUpdatedAt = "";
   let pendingInterAgentDeliveryTrigger: boolean | undefined;
   let pendingAbortMarker: ParsedCodexAbortMarker | undefined;
-  let headModel = "";
+  let metadataModel = "";
   let headHasHistoryBase = false;
   let subagentHistoryStartOrdinal: number | undefined;
   let inheritedProjection: {
@@ -2078,7 +2095,7 @@ async function parseCodexRolloutRange(
     projectionUpdatedAt = "";
     pendingInterAgentDeliveryTrigger = undefined;
     pendingAbortMarker = undefined;
-    currentModel = headModel;
+    currentModel = metadataModel;
   };
 
   const input = createReadStream(filePath, {
@@ -2146,11 +2163,13 @@ async function parseCodexRolloutRange(
         const head = metadata.length === 0;
         metadata.push({ ...parsed, ...(ordinal === undefined ? {} : { ordinal }), endByteOffset: lineEndByteOffset });
         if (head) {
-          headModel = parsed.model;
+          metadataModel = parsed.model;
           headHasHistoryBase = parsed.historyBase !== undefined;
           subagentHistoryStartOrdinal = parsed.subagentHistoryStartOrdinal;
+        } else if (parsed.id === metadata[0]!.id && parsed.model !== "") {
+          metadataModel = parsed.model;
         }
-        currentModel ||= parsed.model;
+        if (head || parsed.id === metadata[0]!.id) currentModel = parsed.model || currentModel;
         continue;
       }
       const deliveryTrigger = pendingInterAgentDeliveryTrigger;
@@ -2390,29 +2409,31 @@ async function parseCodexRolloutRange(
   if (records === 0 || metadata.length === 0) {
     throw new Error(`Codex rollout has no session metadata: ${filePath}`);
   }
-  let selected: SessionMetadata;
-  if (metadata.length === 1) {
-    selected = metadata[0]!;
-  } else {
-    // Copied forks persist child metadata first; extracted archive objects no longer have the rollout filename.
-    const expectedId = filenameId ?? metadata[0]!.id;
-    if (metadata[0]!.id !== expectedId) {
-      throw new Error(`Codex fork metadata cannot be identified: ${filePath}`);
-    }
-    const matching = metadata.filter((value) => value.id === expectedId);
-    if (matching.length !== 1) {
-      throw new Error(`Codex fork metadata is ambiguous: ${filePath}`);
-    }
-    selected = matching[0]!;
+  // Codex writes the canonical metadata first. Forked histories may retain
+  // source metadata later in the rollout; repeated canonical records are
+  // tolerated only when they preserve the same ownership and lineage.
+  const canonical = metadata[0]!;
+  const expectedId = filenameId ?? canonical.id;
+  if (canonical.id !== expectedId) {
+    throw new Error(`Codex fork metadata cannot be identified: ${filePath}`);
   }
-  if (filenameId !== undefined && selected.id !== filenameId) {
+  let effective = canonical;
+  for (const candidate of metadata.slice(1)) {
+    if (candidate.id === expectedId) {
+      if (!sameMetadataStructure(canonical, candidate)) {
+        throw new Error(`Codex repeated session metadata conflicts with its canonical record: ${filePath}`);
+      }
+      effective = candidate;
+    }
+  }
+  if (filenameId !== undefined && canonical.id !== filenameId) {
     throw new Error(`Codex rollout filename and session ID disagree: ${filePath}`);
   }
   const allOrdinalsPresent = recordOrdinals.every((ordinal) => ordinal !== undefined);
   const noOrdinalsPresent = recordOrdinals.every((ordinal) => ordinal === undefined);
   if (
-    selected.historyMode === "paginated"
-      ? !allOrdinalsPresent || selected.ordinal === undefined
+    canonical.historyMode === "paginated"
+      ? !allOrdinalsPresent || canonical.ordinal === undefined
       : !noOrdinalsPresent
   ) throw new Error(`Codex rollout record ordinals disagree with history mode: ${filePath}`);
   if (allOrdinalsPresent && recordOrdinals.some((ordinal, index) =>
@@ -2422,16 +2443,16 @@ async function parseCodexRolloutRange(
     throw new Error(`Codex paginated rollout ordinal exceeds the supported range: ${filePath}`);
   }
   const endOrdinalExclusive = allOrdinalsPresent ? recordOrdinals.at(-1)! + 1 : undefined;
-  const expectedStartOrdinal = selected.historyBase?.endOrdinalExclusive ?? 0;
-  if (selected.historyMode === "paginated" && selected.ordinal !== expectedStartOrdinal) {
+  const expectedStartOrdinal = canonical.historyBase?.endOrdinalExclusive ?? 0;
+  if (canonical.historyMode === "paginated" && canonical.ordinal !== expectedStartOrdinal) {
     throw new Error(`Codex paginated rollout starts at the wrong ordinal: ${filePath}`);
   }
   if (
-    selected.subagentHistoryStartOrdinal !== undefined &&
-    (selected.historyBase !== undefined || selected.ordinal !== 0 ||
-      endOrdinalExclusive! < selected.subagentHistoryStartOrdinal)
+    canonical.subagentHistoryStartOrdinal !== undefined &&
+    (canonical.historyBase !== undefined || canonical.ordinal !== 0 ||
+      endOrdinalExclusive! < canonical.subagentHistoryStartOrdinal)
   ) throw new Error(`Codex paginated subagent inherited prefix is incomplete: ${filePath}`);
-  if (selected.subagentHistoryStartOrdinal !== subagentHistoryStartOrdinal) {
+  if (canonical.subagentHistoryStartOrdinal !== subagentHistoryStartOrdinal) {
     throw new Error(`Codex subagent history projection boundary changed: ${filePath}`);
   }
   if (subagentHistoryStartOrdinal !== undefined && inheritedProjection === undefined) {
@@ -2463,12 +2484,12 @@ async function parseCodexRolloutRange(
     : (inheritedProjection?.rollbackTurns ?? 0) + own.rollbackTurns;
   const firstUser = own.complete.messages.find((message) => message.role === "user")?.text ?? "";
   return {
-    nativeId: selected.id,
-    createdAt: selected.timestamp,
-    updatedAt: updatedAt || selected.timestamp,
-    cwd: selected.cwd,
-    provider: selected.provider,
-    model: currentModel || selected.model,
+    nativeId: canonical.id,
+    createdAt: canonical.timestamp,
+    updatedAt: updatedAt || canonical.timestamp,
+    cwd: effective.cwd,
+    provider: effective.provider,
+    model: currentModel || effective.model,
     title: compactTitle(firstUser),
     conversation: own.complete.conversation,
     managedResources: uniqueManagedResources(own.complete.selectedResponse),
@@ -2482,15 +2503,15 @@ async function parseCodexRolloutRange(
     },
     recordCount: records,
     ...(endOrdinalExclusive === undefined ? {} : { endOrdinalExclusive }),
-    historyMode: selected.historyMode,
-    sessionId: selected.sessionId,
-    ...(selected.subagentHistoryStartOrdinal === undefined
+    historyMode: canonical.historyMode,
+    sessionId: canonical.sessionId,
+    ...(canonical.subagentHistoryStartOrdinal === undefined
       ? {}
-      : { subagentHistoryStartOrdinal: selected.subagentHistoryStartOrdinal }),
-    ...(selected.forkedFromId === undefined ? {} : { forkedFromId: selected.forkedFromId }),
-    ...(selected.parentThreadId === undefined ? {} : { parentThreadId: selected.parentThreadId }),
-    ...(selected.historyBase === undefined ? {} : { historyBase: selected.historyBase }),
-    metadataEndByteOffset: selected.endByteOffset,
+      : { subagentHistoryStartOrdinal: canonical.subagentHistoryStartOrdinal }),
+    ...(canonical.forkedFromId === undefined ? {} : { forkedFromId: canonical.forkedFromId }),
+    ...(canonical.parentThreadId === undefined ? {} : { parentThreadId: canonical.parentThreadId }),
+    ...(canonical.historyBase === undefined ? {} : { historyBase: canonical.historyBase }),
+    metadataEndByteOffset: canonical.endByteOffset,
   };
 }
 

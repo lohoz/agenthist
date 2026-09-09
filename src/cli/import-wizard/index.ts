@@ -2023,7 +2023,13 @@ function reviewPlanLines(
           color,
           "muted",
         ),
-        ...reviewDetailLines(copy.common.reason, blockedReason(session.findings, copy), contentWidth, color, "error"),
+        ...reviewDetailLines(
+          copy.common.reason,
+          session.reason ?? blockedReason(session.findings, copy),
+          contentWidth,
+          color,
+          "error",
+        ),
       );
     });
   }

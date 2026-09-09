@@ -305,6 +305,15 @@ test("OpenCode scan preserves readable multi-session history without copying con
     await writeFile(sourceToolOutput, toolOutputContents, { mode: 0o600 });
     await writeFile(sourcePlan, planContents, { mode: 0o600 });
     createSource(databasePath, sourceToolOutput, undefined, sourceBase);
+    const futureDatabase = new DatabaseSync(databasePath);
+    futureDatabase.exec(`
+      CREATE TABLE session_future_state (
+        session_id TEXT NOT NULL,
+        payload TEXT NOT NULL
+      );
+      INSERT INTO session_future_state VALUES ('ses_root_alpha', 'future history state');
+    `);
+    futureDatabase.close();
     const sessionDiffRoot = path.join(dataRoot, "storage", "session_diff");
     const archivedSessionDiff = path.join(sessionDiffRoot, "ses_archived_beta.json");
     const orphanedSessionDiff = path.join(sessionDiffRoot, "ses_removed_orphan.json");
@@ -335,6 +344,12 @@ test("OpenCode scan preserves readable multi-session history without copying con
     assert.equal(
       scanData.warnings.includes(
         "preserved 1 OpenCode session_diff file(s) without a matching session; excluded them from session migration",
+      ),
+      true,
+    );
+    assert.equal(
+      scanData.warnings.includes(
+        "ignored unclassified OpenCode session relation table(s): session_future_state",
       ),
       true,
     );
@@ -421,6 +436,7 @@ test("OpenCode scan preserves readable multi-session history without copying con
     ).all() as Array<{ name: string }>;
     assert.equal(capturedTables.some((row) => row.name === "credential"), false);
     assert.equal(capturedTables.some((row) => row.name === "project_directory"), false);
+    assert.equal(capturedTables.some((row) => row.name === "session_future_state"), false);
     assert.equal(capturedTables.some((row) => row.name === "session"), true);
     assert.equal(
       (evidence.prepare("SELECT future_session_field AS value FROM session WHERE id = ?").get("ses_root_alpha") as { value: string }).value,
@@ -759,7 +775,7 @@ test("OpenCode scan preserves readable multi-session history without copying con
   }
 });
 
-test("OpenCode keeps pending-input and active-revert sessions readable but blocks migration", async () => {
+test("OpenCode migrates readable pending-input and active-revert sessions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-ts-opencode-pending-"));
   const dataRoot = path.join(root, "opencode-data");
   const state = path.join(root, "state");
@@ -771,7 +787,7 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
     const live = new DatabaseSync(path.join(dataRoot, "opencode.db"));
     live.exec(`
       ALTER TABLE session ADD COLUMN revert TEXT;
-      UPDATE session SET revert = 'null' WHERE id = 'ses_child_gamma';
+      UPDATE session SET parent_id = 'ses_missing_parent', revert = 'null' WHERE id = 'ses_child_alpha';
       INSERT INTO session (
         id, slug, project_id, parent_id, directory, path, title, version, model,
         time_created, time_updated, time_archived, future_session_field, revert
@@ -816,26 +832,25 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
       "-o", path.join(root, "safe.agenthist"),
     ], runtime);
     assert.equal(safeExport.exitCode, 0, safeExport.stderr);
+    const safeInspect = await runCli(["--json", "inspect", path.join(root, "safe.agenthist")], runtime);
+    assert.equal(safeInspect.exitCode, 0, safeInspect.stderr);
+    assert.equal((JSON.parse(safeInspect.stdout) as { data: { entries: unknown[] } }).data.entries.length, 1);
 
     const pendingExport = await runCli([
       "--json", "--state-dir", state, "export", "--session", pending.session_ref,
       "-o", path.join(root, "pending.agenthist"),
     ], runtime);
-    assert.notEqual(pendingExport.exitCode, 0);
-    assert.match(
-      (JSON.parse(pendingExport.stdout) as { error: { message: string } }).error.message,
-      /pending input/,
-    );
+    assert.equal(pendingExport.exitCode, 0, pendingExport.stdout || pendingExport.stderr);
+    const pendingInspect = await runCli(["--json", "inspect", path.join(root, "pending.agenthist")], runtime);
+    assert.equal(pendingInspect.exitCode, 0, pendingInspect.stderr);
 
     const revertedExport = await runCli([
       "--json", "--state-dir", state, "export", "--session", reverted.session_ref,
       "-o", path.join(root, "reverted.agenthist"),
     ], runtime);
-    assert.notEqual(revertedExport.exitCode, 0);
-    assert.match(
-      (JSON.parse(revertedExport.stdout) as { error: { message: string } }).error.message,
-      /active revert/,
-    );
+    assert.equal(revertedExport.exitCode, 0, revertedExport.stdout || revertedExport.stderr);
+    const revertedInspect = await runCli(["--json", "inspect", path.join(root, "reverted.agenthist")], runtime);
+    assert.equal(revertedInspect.exitCode, 0, revertedInspect.stderr);
 
     const head = JSON.parse(await readFile(path.join(state, "history", "opencode", "head.json"), "utf8")) as {
       snapshotId: string;
@@ -891,11 +906,7 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
     assert.ok(fullData.entries > 0);
     assert.deepEqual(
       fullData.skipped_sessions.map((session) => session.session_ref).sort(),
-      [pending.session_ref, reverted.session_ref].sort(),
-    );
-    assert.match(
-      fullData.skipped_sessions.find((session) => session.session_ref === pending.session_ref)!.reason,
-      /pending input/,
+      [reverted.session_ref],
     );
     assert.match(
       fullData.skipped_sessions.find((session) => session.session_ref === reverted.session_ref)!.reason,
@@ -910,7 +921,7 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
       data: { entries: Array<{ session_ref: string }> };
     }).data.entries.map((entry) => entry.session_ref);
     assert.ok(exportedReferences.includes(safe.session_ref));
-    assert.ok(!exportedReferences.includes(pending.session_ref));
+    assert.ok(exportedReferences.includes(pending.session_ref));
     assert.ok(!exportedReferences.includes(reverted.session_ref));
 
     const humanExport = await runCli([
@@ -920,11 +931,9 @@ test("OpenCode keeps pending-input and active-revert sessions readable but block
     assert.equal(humanExport.exitCode, 0, humanExport.stderr);
     assert.equal(humanExport.stdout.startsWith("Warning: partial export\n"), true);
     assert.match(humanExport.stdout, /Resolve the issues, run 'agenthist scan', then export again\./);
-    assert.match(humanExport.stdout, /Skipped\s+2/);
+    assert.match(humanExport.stdout, /Skipped\s+1/);
     assert.match(humanExport.stdout, /Skipped sessions/);
-    assert.match(humanExport.stdout, /Archived conversation/);
     assert.match(humanExport.stdout, /Reverted conversation/);
-    assert.match(humanExport.stdout, new RegExp(pending.session_ref));
     assert.match(humanExport.stdout, new RegExp(reverted.session_ref));
 
   } finally {

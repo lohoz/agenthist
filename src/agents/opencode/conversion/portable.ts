@@ -16,6 +16,7 @@ import type {
 } from "../../../domain/history.js";
 import {
   PORTABLE_CONTEXT_SCHEMA,
+  repairPortableMessages,
   renderPortableContextMessage,
   type PortableContextBlock,
   type PortableContextMessage,
@@ -330,22 +331,24 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
   const parentId = native?.parentId;
   const todoState = openCodeTodoState(native?.todoState);
   const taskClosure = closedTaskChildren(source);
-  if (native?.relationStatus !== "valid") findings.push(blocked("opencode.native_relations.invalid"));
+  if (native?.relationStatus !== "valid") {
+    findings.push({ code: "opencode.native_relations.skipped", disposition: "skipped", count: 1 });
+  }
   if (native?.pendingInputStatus === "present") {
-    findings.push(blocked("opencode.pending_input.present"));
+    findings.push({ code: "opencode.pending_input.skipped", disposition: "skipped", count: 1 });
   } else if (native?.pendingInputStatus !== "empty") {
-    findings.push(blocked("opencode.pending_input.unclassified"));
+    findings.push({ code: "opencode.pending_input.unclassified", disposition: "degraded", count: 1 });
   }
   if (native?.revertStatus === "present") {
-    findings.push(blocked("opencode.revert.present"));
+    findings.push({ code: "opencode.revert.materialized", disposition: "degraded", count: 1 });
   } else if (native?.revertStatus !== "empty") {
-    findings.push(blocked("opencode.revert.unclassified"));
+    findings.push({ code: "opencode.revert.unclassified", disposition: "degraded", count: 1 });
   }
   let historicalWorkState: Extract<PortableContextBlock, { readonly kind: "historical_work_state" }> | undefined;
   if (todoState === undefined) {
-    findings.push(blocked("opencode.todo_list.unsupported"));
+    findings.push({ code: "opencode.todo_list.skipped", disposition: "skipped", count: 1 });
   } else if (todoState.status === "unverified") {
-    findings.push(blocked("opencode.todo_list.unsupported", todoState.count));
+    findings.push({ code: "opencode.todo_list.skipped", disposition: "skipped", count: todoState.count });
   } else if (todoState.status === "verified") {
     const active = todoState.items.filter((item): item is OpenCodeTodoItem & {
       readonly status: "pending" | "in_progress";
@@ -378,7 +381,7 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
     }
   }
   if (sidecars === undefined) {
-    findings.push(blocked("opencode.session_sidecar.unassigned"));
+    findings.push({ code: "opencode.session_sidecar.skipped", disposition: "skipped", count: 1 });
   } else {
     const expectedSessionDiff = `opencode/session_diff/${source.nativeId}.json`;
     const ownedSessionDiff = sidecars.filter((sidecar) => sidecar === expectedSessionDiff).length;
@@ -386,16 +389,16 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
     if (ownedSessionDiff === 1) {
       findings.push({ code: "opencode.session_diff.skipped", disposition: "skipped", count: 1 });
     } else if (ownedSessionDiff > 1) {
-      findings.push(blocked("opencode.session_sidecar.unassigned", ownedSessionDiff));
+      findings.push({ code: "opencode.session_sidecar.skipped", disposition: "skipped", count: ownedSessionDiff });
     }
     if (unassignedSidecars !== 0) {
-      findings.push(blocked("opencode.session_sidecar.unassigned", unassignedSidecars));
+      findings.push({ code: "opencode.session_sidecar.skipped", disposition: "skipped", count: unassignedSidecars });
     }
   }
   if (typeof plan === "string") {
     findings.push({ code: "opencode.session_plan.skipped", disposition: "skipped", count: 1 });
   } else if (plan !== null) {
-    findings.push(blocked("opencode.session_plan.unclassified"));
+    findings.push({ code: "opencode.session_plan.skipped", disposition: "skipped", count: 1 });
   }
   const canonicalComponent = component === undefined ? undefined : [...new Set(component)].sort();
   const canonicalChildren = children === undefined ? undefined : [...new Set(children)].sort();
@@ -406,9 +409,9 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
     children.some((nativeId) => nativeId === source.nativeId || !component.includes(nativeId)) ||
     (parentId !== null && (typeof parentId !== "string" || !component.includes(parentId)))
   ) {
-    findings.push(blocked("opencode.session_component.unsupported"));
+    findings.push({ code: "opencode.session_component.skipped", disposition: "skipped", count: 1 });
   } else if (taskClosure === undefined || JSON.stringify(taskClosure.children) !== JSON.stringify(children)) {
-    findings.push(blocked("opencode.task_relation.unclosed"));
+    findings.push({ code: "opencode.task_relation.skipped", disposition: "skipped", count: 1 });
   } else if (component.length > 1) {
     findings.push({
       code: "opencode.session_relation.skipped",
@@ -503,48 +506,63 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
   if (lifecycle !== 0) findings.push({ code: "opencode.step_lifecycle.skipped", disposition: "skipped", count: lifecycle });
   if (patch !== 0) findings.push({ code: "opencode.patch_metadata.skipped", disposition: "skipped", count: patch });
   if (compactionPart !== 0 || compactionSummary !== 0 || compactionEvent !== 0) {
-    findings.push(blocked(
-      "opencode.compaction.unsupported",
-      Math.max(compactionPart, compactionSummary) + compactionEvent,
-    ));
+    findings.push({
+      code: "opencode.compaction.skipped",
+      disposition: "skipped",
+      count: Math.max(compactionPart, compactionSummary) + compactionEvent,
+    });
   }
   if (systemEvent !== 0) {
-    findings.push(blocked("opencode.session_message.context.unsupported", systemEvent));
+    findings.push({ code: "opencode.session_message.context.skipped", disposition: "skipped", count: systemEvent });
   }
-  if (shellEvent !== 0) findings.push(blocked("opencode.session_message.shell_event.unclosed", shellEvent));
+  if (shellEvent !== 0) {
+    findings.push({ code: "opencode.session_message.shell_event.skipped", disposition: "skipped", count: shellEvent });
+  }
   if (syntheticEvent !== 0) {
-    findings.push(blocked("opencode.session_message.synthetic_event.unclosed", syntheticEvent));
+    findings.push({ code: "opencode.session_message.synthetic_event.skipped", disposition: "skipped", count: syntheticEvent });
   }
-  if (assistantError !== 0) findings.push(blocked("opencode.assistant_error.unsupported", assistantError));
-  if (agentReference !== 0) findings.push(blocked("opencode.agent_reference.unsupported", agentReference));
-  if (subtask !== 0) findings.push(blocked("opencode.subtask.unsupported", subtask));
+  if (assistantError !== 0) {
+    findings.push({ code: "opencode.assistant_error.skipped", disposition: "skipped", count: assistantError });
+  }
+  if (agentReference !== 0) {
+    findings.push({ code: "opencode.agent_reference.skipped", disposition: "skipped", count: agentReference });
+  }
+  if (subtask !== 0) findings.push({ code: "opencode.subtask.skipped", disposition: "skipped", count: subtask });
   if (ignoredText !== 0) findings.push({ code: "opencode.ignored_text.skipped", disposition: "skipped", count: ignoredText });
   if (emptyText !== 0) findings.push({ code: "opencode.empty_text.skipped", disposition: "skipped", count: emptyText });
   if (tool !== 0 || sessionTool !== 0) {
-    findings.push(blocked("opencode.tool_history.unprojectable", tool + sessionTool));
+    findings.push({ code: "opencode.tool_history.skipped", disposition: "skipped", count: tool + sessionTool });
   }
   if (file !== 0 || sessionFile !== 0) {
-    findings.push(blocked("opencode.file_history.unprojectable", file + sessionFile));
+    findings.push({ code: "opencode.file_history.skipped", disposition: "skipped", count: file + sessionFile });
   }
   if (sessionReference !== 0) {
-    findings.push(blocked("opencode.reference_history.unprojectable", sessionReference));
+    findings.push({ code: "opencode.reference_history.skipped", disposition: "skipped", count: sessionReference });
   }
-  if (mixedCarrier !== 0) findings.push(blocked("opencode.message_carriers.mixed", mixedCarrier));
+  if (mixedCarrier !== 0) {
+    findings.push({ code: "opencode.message_carriers.mixed", disposition: "degraded", count: mixedCarrier });
+  }
   if (invalidSessionMessage !== 0) {
-    findings.push(blocked("opencode.session_message.invalid", invalidSessionMessage));
+    findings.push({ code: "opencode.session_message.invalid", disposition: "skipped", count: invalidSessionMessage });
   }
   if (incompleteSessionMessage !== 0) {
-    findings.push(blocked("opencode.session_message.incomplete", incompleteSessionMessage));
+    findings.push({ code: "opencode.session_message.incomplete", disposition: "skipped", count: incompleteSessionMessage });
   }
-  if (emptySessionMessage !== 0) findings.push(blocked("opencode.session_message.empty", emptySessionMessage));
+  if (emptySessionMessage !== 0) {
+    findings.push({ code: "opencode.session_message.empty", disposition: "skipped", count: emptySessionMessage });
+  }
   if (sessionControl !== 0) {
     findings.push({ code: "opencode.session_message_control.skipped", disposition: "skipped", count: sessionControl });
   }
   const compactedNativeSessionContext = nativeSessionContext - activeNativeSessionContext;
   if (compactedNativeSessionContext !== 0) {
-    findings.push(blocked("opencode.session_message.native_context", compactedNativeSessionContext));
+    findings.push({
+      code: "opencode.session_message.native_context.skipped",
+      disposition: "skipped",
+      count: compactedNativeSessionContext,
+    });
   }
-  if (other !== 0) findings.push(blocked("opencode.native_content.unprojectable", other));
+  if (other !== 0) findings.push({ code: "opencode.native_content.skipped", disposition: "skipped", count: other });
 
   const messages: PortableContextMessage[] = [];
   const validateContent = new Set<number>();
@@ -650,10 +668,11 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
     }
   }
   if (activeNativeSessionContext !== systemContextRows) {
-    findings.push(blocked(
-      "opencode.session_message.native_context",
-      Math.max(activeNativeSessionContext, systemContextRows),
-    ));
+    findings.push({
+      code: "opencode.session_message.native_context.skipped",
+      disposition: "skipped",
+      count: Math.max(activeNativeSessionContext, systemContextRows),
+    });
   }
   for (const message of messages) {
     if (!validateContent.has(message.ordinal)) continue;
@@ -758,14 +777,25 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
     } else {
       findings.push(knownNotes.has(code)
         ? { code, disposition: "skipped", count }
-        : blocked("opencode.tool_note.unknown", count));
+        : { code: "opencode.tool_note.unknown", disposition: "skipped", count });
     }
   }
-  if (messages.length === 0) findings.push(blocked("portable.messages.empty"));
-  if (messages[0]?.role !== "user" || messages.at(-1)?.role !== "assistant") invalidSequence++;
-  if (invalidTimestamp !== 0) findings.push(blocked("portable.message_timestamp.invalid", invalidTimestamp));
-  if (invalidContent !== 0) findings.push(blocked("portable.message_content.invalid", invalidContent));
-  if (invalidSequence !== 0) findings.push(blocked("portable.message_sequence.unsupported", invalidSequence));
+  const repaired = repairPortableMessages("opencode", messages, source.createdAt);
+  if (repaired.messages.length === 0 || !repaired.messages.some((message) => message.role === "user")) {
+    findings.push(blocked("portable.messages.empty"));
+  }
+  const repairedTimestamps = Math.max(invalidTimestamp, repaired.repairedTimestamps);
+  const skippedContent = Math.max(invalidContent, repaired.skippedBlocks + repaired.skippedMessages);
+  const repairedSequence = Math.max(invalidSequence, repaired.coalescedMessages);
+  if (repairedTimestamps !== 0) {
+    findings.push({ code: "portable.message_timestamp.repaired", disposition: "degraded", count: repairedTimestamps });
+  }
+  if (skippedContent !== 0) {
+    findings.push({ code: "portable.message_content.skipped", disposition: "skipped", count: skippedContent });
+  }
+  if (repairedSequence !== 0) {
+    findings.push({ code: "portable.message_sequence.coalesced", disposition: "degraded", count: repairedSequence });
+  }
 
   findings.push({ code: "opencode.native_envelope.skipped", disposition: "skipped", count: 1 });
   if (typeof nativeSession?.agent === "string" && nativeSession.agent !== "") {
@@ -793,7 +823,7 @@ function normalizeOpenCodePortableContext(source: StoredSession): PortableSource
       workingDirectory: path.normalize(source.context),
       defaultModel: source.model,
       title: source.title,
-      messages,
+      messages: repaired.messages,
     },
   };
 }

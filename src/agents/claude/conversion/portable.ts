@@ -11,6 +11,7 @@ import type { AgentSnapshot, ConversationItem, JsonValue, StoredSession } from "
 import {
   hasClosedHistoricalToolSequence,
   PORTABLE_CONTEXT_SCHEMA,
+  repairPortableMessages,
   renderPortableContextMessage,
   validHistoricalReference,
   type HistoricalToolEvidence,
@@ -375,15 +376,15 @@ function normalizeClaudePortableContext(
   }
   const findings: ConversionFinding[] = [];
   const descriptor = readClaudeDescriptor(source);
-  if (descriptor.blockers.length !== 0) {
-    findings.push(blocked("claude.native_relations.unsupported", descriptor.blockers.length));
+  for (const code of descriptor.blockers) {
+    findings.push({ code, disposition: "degraded", count: 1 });
   }
   const expectedRawFiles = [
     descriptor.mainRelativePath,
     ...descriptor.relatedFiles.map((file) => file.relativePath),
   ].sort();
   if (JSON.stringify([...source.rawFiles].sort()) !== JSON.stringify(expectedRawFiles)) {
-    findings.push(blocked("claude.transcript_closure.unsupported"));
+    findings.push({ code: "claude.transcript_closure.partial", disposition: "degraded", count: 1 });
   }
   const relatedCounts = new Map<string, number>();
   for (const file of descriptor.relatedFiles) {
@@ -393,7 +394,11 @@ function normalizeClaudePortableContext(
   const subagentTranscripts = relatedCounts.get("subagent-transcript") ?? 0;
   const subagentMetadata = relatedCounts.get("subagent-metadata") ?? 0;
   if (subagentTranscripts !== subagentMetadata) {
-    findings.push(blocked("claude.native_relations.unsupported", Math.max(subagentTranscripts, subagentMetadata)));
+    findings.push({
+      code: "claude.subagent_private_history.skipped",
+      disposition: "skipped",
+      count: Math.max(subagentTranscripts, subagentMetadata),
+    });
   } else if (
     subagentTranscripts !== 0 && !nativeBlockers.has("claude.native.subagent_bundle_unverified")
   ) {
@@ -421,10 +426,11 @@ function normalizeClaudePortableContext(
     nativeBlockers.has("claude.native.tool_result_closure_unverified") ||
     unmaterializedRetainedToolResults !== 0
   ) {
-    findings.push(blocked(
-      "claude.retained_tool_result.unsupported",
-      Math.max(1, retainedToolResults, unmaterializedRetainedToolResults),
-    ));
+    findings.push({
+      code: "claude.retained_tool_result.skipped",
+      disposition: "skipped",
+      count: Math.max(1, retainedToolResults, unmaterializedRetainedToolResults),
+    });
   }
   if (materializedRetainedToolResults !== 0) {
     findings.push({
@@ -451,7 +457,9 @@ function normalizeClaudePortableContext(
   const taskList = options.taskList;
   let historicalWorkState: Extract<PortableContextBlock, { readonly kind: "historical_work_state" }> | undefined;
   if (taskEntries !== (taskList?.tasks.length ?? 0)) {
-    if (taskEntries !== 0) findings.push(blocked("claude.task_list.unsupported", taskEntries));
+    if (taskEntries !== 0) {
+      findings.push({ code: "claude.task_list.skipped", disposition: "skipped", count: taskEntries });
+    }
   } else if (taskList !== undefined) {
     const activeTasks = taskList.tasks.filter((task): task is ClaudeTaskItem & {
       readonly status: "pending" | "in_progress";
@@ -511,7 +519,9 @@ function normalizeClaudePortableContext(
     "task-highwatermark",
   ]);
   const unknownRelated = descriptor.relatedFiles.filter((file) => !knownRelatedRoles.has(file.role)).length;
-  if (unknownRelated !== 0) findings.push(blocked("claude.native_relations.unsupported", unknownRelated));
+  if (unknownRelated !== 0) {
+    findings.push({ code: "claude.native_relations.skipped", disposition: "skipped", count: unknownRelated });
+  }
   if (!path.isAbsolute(source.context)) findings.push(blocked("portable.working_directory.invalid"));
   if (materializedCompactionCheckpoints !== 0) {
     findings.push({
@@ -675,7 +685,7 @@ function normalizeClaudePortableContext(
     unknownNonGraphRecordCount === undefined ||
     (materializedCompactionCheckpoints !== 0 && nondurablePreservedMessages === undefined)
   ) {
-    findings.push(blocked("claude.graph_capability.unavailable"));
+    findings.push({ code: "claude.graph_capability.partial", disposition: "degraded", count: 1 });
   } else {
     const historicalCwdsValid = observedCwds.length !== 0 && observedCwds.every((value) =>
       path.isAbsolute(value) && path.normalize(value) === value);
@@ -691,7 +701,11 @@ function normalizeClaudePortableContext(
       !path.isAbsolute(latestObservedCwd) || path.normalize(latestObservedCwd) !== latestObservedCwd ||
       path.normalize(effectiveCwd) !== path.normalize(source.context)
     ) {
-      findings.push(blocked("claude.working_directories.unsupported", Math.max(1, observedCwds.length)));
+      findings.push({
+        code: "claude.working_directory_history.partial",
+        disposition: "degraded",
+        count: Math.max(1, observedCwds.length),
+      });
     }
     if (
       messageRetractionAppliedCount !== materializedMessageRetractions ||
@@ -699,10 +713,11 @@ function normalizeClaudePortableContext(
       messageRetractionUnsupportedCount !== 0 ||
       messageRetractionRecordCount < messageRetractionEpisodeCount
     ) {
-      findings.push(blocked(
-        "claude.message_retraction.unsupported",
-        Math.max(1, messageRetractionEpisodeCount, messageRetractionUnsupportedCount),
-      ));
+      findings.push({
+        code: "claude.message_retraction.skipped",
+        disposition: "skipped",
+        count: Math.max(1, messageRetractionEpisodeCount, messageRetractionUnsupportedCount),
+      });
     } else if (messageRetractionAppliedCount !== 0) {
       findings.push({
         code: "claude.message_retraction.materialized",
@@ -725,11 +740,15 @@ function normalizeClaudePortableContext(
       });
     }
     if (toolResultGraphReturns > graphDiscontinuities) {
-      findings.push(blocked("claude.graph_capability.unavailable"));
+      findings.push({ code: "claude.graph_capability.partial", disposition: "degraded", count: 1 });
     } else {
       const unsupportedGraphDiscontinuities = graphDiscontinuities - toolResultGraphReturns;
       if (unsupportedGraphDiscontinuities !== 0) {
-        findings.push(blocked("claude.message_graph.nonlinear", unsupportedGraphDiscontinuities));
+        findings.push({
+          code: "claude.message_graph.nonlinear",
+          disposition: "skipped",
+          count: unsupportedGraphDiscontinuities,
+        });
       }
       if (toolResultGraphReturns !== 0) {
         findings.push({
@@ -741,7 +760,11 @@ function normalizeClaudePortableContext(
     }
     const otherNonMessageGraphRecords = Math.max(0, nonMessageGraphRecords - compactBoundaryCount);
     if (otherNonMessageGraphRecords !== 0) {
-      findings.push(blocked("claude.non_message_graph.unprojectable", otherNonMessageGraphRecords));
+      findings.push({
+        code: "claude.non_message_graph.skipped",
+        disposition: "skipped",
+        count: otherNonMessageGraphRecords,
+      });
     }
     if (modelRefusalFallbackRecordCount !== 0) {
       findings.push({
@@ -838,7 +861,11 @@ function normalizeClaudePortableContext(
       taskReminderItemCount < taskReminderRecordCount ||
       taskReminderDetailItemCount > taskReminderItemCount
     ) {
-      findings.push(blocked("claude.task_reminder.unsupported", Math.max(1, taskReminderRecordCount)));
+      findings.push({
+        code: "claude.task_reminder.skipped",
+        disposition: "skipped",
+        count: Math.max(1, taskReminderRecordCount),
+      });
     } else {
       if (taskReminderRecordCount !== 0) {
         findings.push({
@@ -859,7 +886,11 @@ function normalizeClaudePortableContext(
       todoReminderItemCount < todoReminderRecordCount ||
       todoReminderDetailItemCount > todoReminderItemCount
     ) {
-      findings.push(blocked("claude.todo_reminder.unsupported", Math.max(1, todoReminderRecordCount)));
+      findings.push({
+        code: "claude.todo_reminder.skipped",
+        disposition: "skipped",
+        count: Math.max(1, todoReminderRecordCount),
+      });
     } else {
       if (todoReminderRecordCount !== 0) {
         findings.push({
@@ -1031,10 +1062,11 @@ function normalizeClaudePortableContext(
       });
     }
     if (compactBoundaryCount !== 0 || compactSummaryCount !== 0 || apiCompactionBlockCount !== 0) {
-      findings.push(blocked(
-        "claude.compaction.unsupported",
-        Math.max(compactBoundaryCount, compactSummaryCount, apiCompactionBlockCount),
-      ));
+      findings.push({
+        code: "claude.compaction.skipped",
+        disposition: "skipped",
+        count: Math.max(compactBoundaryCount, compactSummaryCount, apiCompactionBlockCount),
+      });
     }
     if (nondurablePreservedMessages !== undefined && nondurablePreservedMessages !== 0) {
       findings.push({
@@ -1193,11 +1225,11 @@ function normalizeClaudePortableContext(
         contentReplacementInactiveCount + contentReplacementUnsupportedCount ||
       contentReplacementAppliedCount !== materializedContentReplacements
     ) {
-      findings.push(blocked("claude.content_replacement.unsupported", Math.max(
-        1,
-        contentReplacementRecordCount,
-        contentReplacementItemCount,
-      )));
+      findings.push({
+        code: "claude.content_replacement.skipped",
+        disposition: "skipped",
+        count: Math.max(1, contentReplacementRecordCount, contentReplacementItemCount),
+      });
     } else {
       if (contentReplacementItemCount > contentReplacementCurrentCount) {
         findings.push({
@@ -1214,11 +1246,19 @@ function normalizeClaudePortableContext(
         });
       }
       if (contentReplacementUnsupportedCount !== 0) {
-        findings.push(blocked("claude.content_replacement.unsupported", contentReplacementUnsupportedCount));
+        findings.push({
+          code: "claude.content_replacement.skipped",
+          disposition: "skipped",
+          count: contentReplacementUnsupportedCount,
+        });
       }
     }
     if (unknownNonGraphRecordCount !== 0) {
-      findings.push(blocked("claude.non_graph_record.unprojectable", unknownNonGraphRecordCount));
+      findings.push({
+        code: "claude.non_graph_record.skipped",
+        disposition: "skipped",
+        count: unknownNonGraphRecordCount,
+      });
     }
   }
 
@@ -1413,11 +1453,11 @@ function normalizeClaudePortableContext(
       continue;
     }
     if (item.role !== "user" && item.role !== "assistant") {
-      findings.push(blocked("portable.message_role.unsupported"));
+      findings.push({ code: "portable.message_role.skipped", disposition: "skipped", count: 1 });
       continue;
     }
     if (item.contentKinds === undefined) {
-      findings.push(blocked("claude.content_kinds.unavailable"));
+      findings.push({ code: "claude.content_kinds.partial", disposition: "degraded", count: 1 });
     } else {
       item.contentKinds.forEach((kind) => classifyKind(kind, contentCounts));
     }
@@ -1628,17 +1668,27 @@ function normalizeClaudePortableContext(
   if (toolEvidence !== 0) {
     findings.push({ code: "claude.tool_history.degraded", disposition: "degraded", count: toolEvidence });
   }
-  if (tool > toolEvidence) findings.push(blocked("claude.tool_history.unprojectable", tool - toolEvidence));
+  if (tool > toolEvidence) {
+    findings.push({ code: "claude.tool_history.skipped", disposition: "skipped", count: tool - toolEvidence });
+  }
   if (resource > resourceEvidence) {
-    findings.push(blocked("claude.resource_history.unprojectable", resource - resourceEvidence));
+    findings.push({ code: "claude.resource_history.skipped", disposition: "skipped", count: resource - resourceEvidence });
   }
   if (reference > referenceEvidence) {
-    findings.push(blocked("claude.reference_history.unprojectable", reference - referenceEvidence));
+    findings.push({ code: "claude.reference_history.skipped", disposition: "skipped", count: reference - referenceEvidence });
   }
-  if (unknown !== 0) findings.push(blocked("claude.native_content.unprojectable", unknown));
-  if (assistantErrors !== 0) findings.push(blocked("claude.assistant_error.unsupported", assistantErrors));
+  if (unknown !== 0) {
+    findings.push({ code: "claude.native_content.skipped", disposition: "skipped", count: unknown });
+  }
+  if (assistantErrors !== 0) {
+    findings.push({ code: "claude.assistant_error.skipped", disposition: "skipped", count: assistantErrors });
+  }
   if (assistantCompletionFailures !== 0) {
-    findings.push(blocked("claude.assistant_completion.unsupported", assistantCompletionFailures));
+    findings.push({
+      code: "claude.assistant_completion.skipped",
+      disposition: "skipped",
+      count: assistantCompletionFailures,
+    });
   }
   if (coalescedCompactionUserMessages !== 0) {
     findings.push({
@@ -1706,14 +1756,25 @@ function normalizeClaudePortableContext(
     if (skippedNotes.has(code)) findings.push({ code, disposition: "skipped", count });
     else if (degradedNotes.has(code)) findings.push({ code, disposition: "degraded", count });
     else if (synthesizedNotes.has(code)) findings.push({ code, disposition: "synthesized", count });
-    else if (blockedNotes.has(code)) findings.push(blocked(code, count));
-    else findings.push(blocked("claude.tool_note.unknown", count));
+    else if (blockedNotes.has(code)) findings.push({ code, disposition: "skipped", count });
+    else findings.push({ code: "claude.tool_note.unknown", disposition: "skipped", count });
   }
-  if (messages.length === 0) findings.push(blocked("portable.messages.empty"));
-  if (messages[0]?.role !== "user" || messages.at(-1)?.role !== "assistant") invalidSequence++;
-  if (invalidTimestamp !== 0) findings.push(blocked("portable.message_timestamp.invalid", invalidTimestamp));
-  if (invalidContent !== 0) findings.push(blocked("portable.message_content.invalid", invalidContent));
-  if (invalidSequence !== 0) findings.push(blocked("portable.message_sequence.unsupported", invalidSequence));
+  const repaired = repairPortableMessages("claude", messages, source.createdAt);
+  if (repaired.messages.length === 0 || !repaired.messages.some((message) => message.role === "user")) {
+    findings.push(blocked("portable.messages.empty"));
+  }
+  const repairedTimestamps = Math.max(invalidTimestamp, repaired.repairedTimestamps);
+  const skippedContent = Math.max(invalidContent, repaired.skippedBlocks + repaired.skippedMessages);
+  const repairedSequence = Math.max(invalidSequence, repaired.coalescedMessages);
+  if (repairedTimestamps !== 0) {
+    findings.push({ code: "portable.message_timestamp.repaired", disposition: "degraded", count: repairedTimestamps });
+  }
+  if (skippedContent !== 0) {
+    findings.push({ code: "portable.message_content.skipped", disposition: "skipped", count: skippedContent });
+  }
+  if (repairedSequence !== 0) {
+    findings.push({ code: "portable.message_sequence.coalesced", disposition: "degraded", count: repairedSequence });
+  }
 
   findings.push({ code: "claude.native_envelope.skipped", disposition: "skipped", count: 1 });
   const normalized = normalizeConversionFindings(findings);
@@ -1730,7 +1791,7 @@ function normalizeClaudePortableContext(
       workingDirectory: path.normalize(source.context),
       defaultModel: source.model,
       title: source.title,
-      messages,
+      messages: repaired.messages,
     },
   };
 }

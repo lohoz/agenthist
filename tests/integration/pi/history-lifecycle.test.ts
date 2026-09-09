@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { parsePiSession } from "../../../src/agents/pi/history/session.js";
+import { piSessionRef } from "../../../src/agents/pi/identity.js";
 import { piWorkspaceCarrier } from "../../../src/agents/pi/session-path.js";
 import { runCli } from "../../../src/cli/program.js";
 import { readScanResult } from "../../support/scan-result.js";
@@ -227,12 +228,16 @@ test("Pi history scans, closes parent exports, and restores transactionally with
       timestamp: "2026-08-16T02:30:00.000Z",
       cwd: CHILD_CWD,
     })}\nnot-json\n`, { mode: 0o600 });
-    const rejectedScan = await runCli([
+    const lenientScan = await runCli([
       "--json", "--state-dir", state, "--pi-session-dir", sourceRoot,
       "scan", "--agent", "pi",
     ], sourceRuntime);
-    assert.equal(rejectedScan.exitCode, 3);
-    assert.match(rejectedScan.stdout, /Pi session contains invalid JSON/);
+    assert.equal(lenientScan.exitCode, 0, lenientScan.stderr);
+    const lenientData = readScanResult(lenientScan.stdout, "pi");
+    assert.equal(lenientData.sessions, 2);
+    assert.equal(lenientData.warnings.some((warning) =>
+      warning.includes("skipped unreadable Pi session malformed.jsonl") &&
+      warning.includes("Pi session contains invalid JSON")), true);
     await rm(malformed);
 
     const retained = await runCli([
@@ -358,16 +363,38 @@ test("Pi history scans, closes parent exports, and restores transactionally with
       timestamp: "2026-08-16T04:00:00.000Z",
     }), { mode: 0o600 });
     const conflicted = await runCli([...importArgs, "--dry-run"], targetRuntime);
-    assert.equal(conflicted.exitCode, 3);
-    assert.match(conflicted.stdout, /target already stores this Pi session at/);
-    await assert.rejects(readFile(targetParent), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+    assert.equal(conflicted.exitCode, 0, conflicted.stderr);
+    const conflictedData = (JSON.parse(conflicted.stdout) as {
+      data: {
+        status: string;
+        new_sessions: number;
+        blocked: number;
+        blocked_sessions: Array<{ source_session_ref: string; reason?: string }>;
+      };
+    }).data;
+    assert.equal(conflictedData.status, "ready");
+    assert.equal(conflictedData.new_sessions, 1);
+    assert.equal(conflictedData.blocked, 1);
+    assert.equal(conflictedData.blocked_sessions[0]?.source_session_ref, piSessionRef(CHILD_ID));
+    assert.match(conflictedData.blocked_sessions[0]?.reason ?? "", /target already stores this Pi session at/);
+
+    const partiallyApplied = await runCli([...importArgs, "--apply"], targetRuntime);
+    assert.equal(partiallyApplied.exitCode, 0, partiallyApplied.stderr);
+    const partiallyAppliedData = (JSON.parse(partiallyApplied.stdout) as {
+      data: { status: string; written: number; blocked: number };
+    }).data;
+    assert.equal(partiallyAppliedData.status, "completed");
+    assert.equal(partiallyAppliedData.written, 1);
+    assert.equal(partiallyAppliedData.blocked, 1);
+    assert.equal(bodyAfterHeader(await readFile(targetParent, "utf8")), bodyAfterHeader(parentBytes));
     await assert.rejects(readFile(targetChild), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+    assert.match(await readFile(conflictingFile, "utf8"), /Conflicting Pi user/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("Pi bulk export skips an external-parent session but still fails on a missing snapshot file", async () => {
+test("Pi exports an external-parent session independently but still fails on a missing snapshot file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-pi-export-preflight-"));
   try {
     const sourceRoot = path.join(root, "source-sessions");
@@ -412,13 +439,14 @@ test("Pi bulk export skips an external-parent session but still fails on a missi
     const safeReference = sessions.find((session) => session.title === "Pi safe export session")!.session_ref;
     const blockedReference = sessions.find((session) => session.title === "Pi external parent session")!.session_ref;
 
-    const strictExport = await runCli([
+    const externalArchive = path.join(root, "pi-external-parent.agenthist");
+    const externalExport = await runCli([
       "--json", "--state-dir", state, "export", "--session", blockedReference,
-      "-o", path.join(root, "pi-blocked.agenthist"),
+      "-o", externalArchive,
     ], runtime);
-    assert.equal(strictExport.exitCode, 3);
-    assert.match((JSON.parse(strictExport.stdout) as { error: { message: string } }).error.message,
-      /cannot be exported without losing native history/);
+    assert.equal(externalExport.exitCode, 0, externalExport.stderr);
+    const externalInspect = await runCli(["--json", "inspect", externalArchive], runtime);
+    assert.equal(externalInspect.exitCode, 0, externalInspect.stderr);
 
     const archive = path.join(root, "pi-mixed.agenthist");
     const mixedExport = await runCli([
@@ -431,14 +459,13 @@ test("Pi bulk export skips an external-parent session but still fails on a missi
         skipped_sessions: Array<{ session_ref: string; reason: string }>;
       };
     }).data;
-    assert.equal(mixedData.entries, 1);
-    assert.deepEqual(mixedData.skipped_sessions.map((session) => session.session_ref), [blockedReference]);
-    assert.match(mixedData.skipped_sessions[0]!.reason, /cannot be exported without losing native history/);
+    assert.equal(mixedData.entries, 2);
+    assert.deepEqual(mixedData.skipped_sessions, []);
     const inspected = await runCli(["--json", "inspect", archive], runtime);
     assert.equal(inspected.exitCode, 0, inspected.stderr);
     assert.deepEqual((JSON.parse(inspected.stdout) as {
       data: { entries: Array<{ session_ref: string }> };
-    }).data.entries.map((entry) => entry.session_ref), [safeReference]);
+    }).data.entries.map((entry) => entry.session_ref).sort(), [blockedReference, safeReference].sort());
 
     const head = JSON.parse(await readFile(path.join(state, "history", "pi", "head.json"), "utf8")) as {
       snapshotId: string;
@@ -456,6 +483,63 @@ test("Pi bulk export skips an external-parent session but still fails on a missi
     assert.equal(brokenExport.exitCode, 3);
     assert.match((JSON.parse(brokenExport.stdout) as { error: { message: string } }).error.message,
       /ENOENT|no such file/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi preserves sessions with a cyclic parent chain and detaches the cycle for migration", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-pi-cycle-"));
+  try {
+    const sourceRoot = path.join(root, "source-sessions");
+    const carrier = path.join(sourceRoot, piWorkspaceCarrier(PARENT_CWD));
+    const firstFile = path.join(carrier, `2026-08-16T01-00-00-000Z_${PARENT_ID}.jsonl`);
+    const secondFile = path.join(carrier, `2026-08-16T02-00-00-000Z_${CHILD_ID}.jsonl`);
+    const state = path.join(root, "state");
+    const archive = path.join(root, "pi-cycle.agenthist");
+    await mkdir(carrier, { recursive: true });
+    await writeFile(firstFile, sessionBytes({
+      id: PARENT_ID,
+      cwd: PARENT_CWD,
+      title: "Pi cycle first",
+      user: "First readable turn",
+      answer: "First readable answer",
+      timestamp: "2026-08-16T01:00:00.000Z",
+      parentSession: secondFile,
+    }), { mode: 0o600 });
+    await writeFile(secondFile, sessionBytes({
+      id: CHILD_ID,
+      cwd: PARENT_CWD,
+      title: "Pi cycle second",
+      user: "Second readable turn",
+      answer: "Second readable answer",
+      timestamp: "2026-08-16T02:00:00.000Z",
+      parentSession: firstFile,
+    }), { mode: 0o600 });
+    const runtime = { environment: { HOME: root }, cwd: root, home: root };
+
+    const scanned = await runCli([
+      "--json", "--state-dir", state, "--pi-session-dir", sourceRoot,
+      "scan", "--agent", "pi",
+    ], runtime);
+    assert.equal(scanned.exitCode, 0, scanned.stderr);
+    const scanData = readScanResult(scanned.stdout, "pi");
+    assert.equal(scanData.sessions, 2);
+    assert.equal(scanData.warnings.filter((warning) =>
+      warning.includes("pi.native.parent_session_cycle")).length, 2);
+
+    const exported = await runCli([
+      "--json", "--state-dir", state, "export", "--agent", "pi", "-o", archive,
+    ], runtime);
+    assert.equal(exported.exitCode, 0, exported.stderr);
+    const exportData = (JSON.parse(exported.stdout) as {
+      data: { entries: number; skipped_sessions: unknown[] };
+    }).data;
+    assert.equal(exportData.entries, 2);
+    assert.deepEqual(exportData.skipped_sessions, []);
+
+    const inspected = await runCli(["--json", "inspect", archive], runtime);
+    assert.equal(inspected.exitCode, 0, inspected.stderr);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

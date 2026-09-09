@@ -41,23 +41,30 @@ function rawRelative(carrier: PiSessionCarrier): string {
   return `pi/${carrier.relativePath}`;
 }
 
-function validateParentGraph(captured: readonly CapturedPiSession[]): void {
+function cyclicParentSessions(captured: readonly CapturedPiSession[]): ReadonlySet<string> {
   const bySourcePath = new Map(captured.map((item) => [path.resolve(item.carrier.sourcePath), item]));
   const complete = new Set<string>();
   const visiting = new Set<string>();
+  const stack: CapturedPiSession[] = [];
+  const cyclic = new Set<string>();
   const visit = (item: CapturedPiSession): void => {
     if (complete.has(item.sessionRef)) return;
     if (visiting.has(item.sessionRef)) {
-      throw new Error(`Pi parent session graph contains a cycle: ${item.nativeId}`);
+      const start = stack.findIndex((candidate) => candidate.sessionRef === item.sessionRef);
+      for (const member of stack.slice(Math.max(0, start))) cyclic.add(member.sessionRef);
+      return;
     }
     visiting.add(item.sessionRef);
+    stack.push(item);
     const parentPath = item.parentSession;
     const parent = parentPath === undefined ? undefined : bySourcePath.get(path.resolve(parentPath));
     if (parent !== undefined) visit(parent);
+    stack.pop();
     visiting.delete(item.sessionRef);
     complete.add(item.sessionRef);
   };
   for (const item of captured) visit(item);
+  return cyclic;
 }
 
 function objectValue(value: JsonValue): Record<string, JsonValue> | undefined {
@@ -86,6 +93,8 @@ export async function scanPi(options: ScanPiOptions): Promise<ScanPiResult> {
   const workspace = await createSnapshotWorkspace(options.stateDirectory, "pi");
   try {
     const captured: CapturedPiSession[] = [];
+    const auxiliaryFiles: string[] = [];
+    const warnings: string[] = [];
     const references = new Set<string>();
     const nativeIds = new Set<string>();
     let reusedSessions = 0;
@@ -115,7 +124,17 @@ export async function scanPi(options: ScanPiOptions): Promise<ScanPiResult> {
       }
       const destination = path.join(workspace.rawRoot, ...relativePath.split("/"));
       await copyStableFile(carrier.sourcePath, destination);
-      const parsed = await parsePiSession(destination, carrier.modifiedAt);
+      let parsed;
+      try {
+        parsed = await parsePiSession(destination, carrier.modifiedAt);
+      } catch (error) {
+        auxiliaryFiles.push(relativePath);
+        warnings.push(
+          `skipped unreadable Pi session ${carrier.fileName}: ` +
+          (error instanceof Error ? error.message : "session validation failed"),
+        );
+        continue;
+      }
       const nativeId = canonicalPiSessionId(parsed.header.id);
       if (nativeIds.has(nativeId)) throw new Error(`Pi session appears more than once: ${nativeId}`);
       nativeIds.add(nativeId);
@@ -134,17 +153,20 @@ export async function scanPi(options: ScanPiOptions): Promise<ScanPiResult> {
     }
     const after = await discoverPiSessions(source.sessionRoot);
     if (!samePiInventory(before, after)) throw new Error("Pi history changed while scanning");
-    validateParentGraph(captured);
+    const cyclicParents = cyclicParentSessions(captured);
 
     const bySourcePath = new Map(captured.map((item) => [path.resolve(item.carrier.sourcePath), item]));
-    const warnings: string[] = [];
     const sessions = captured.map((item): StoredSession => {
       const parentPath = item.parentSession;
-      const parent = parentPath === undefined ? undefined : bySourcePath.get(path.resolve(parentPath));
-      const blockers = parentPath !== undefined && parent === undefined ? ["pi.native.parent_session_external"] : [];
+      const parent = parentPath === undefined || cyclicParents.has(item.sessionRef)
+        ? undefined
+        : bySourcePath.get(path.resolve(parentPath));
+      const blockers = cyclicParents.has(item.sessionRef)
+        ? ["pi.native.parent_session_cycle"]
+        : parentPath !== undefined && parent === undefined ? ["pi.native.parent_session_external"] : [];
       if (parent?.sessionRef === item.sessionRef) throw new Error(`Pi session is its own parent: ${item.nativeId}`);
       if (blockers.length !== 0) {
-        warnings.push(`Pi session ${item.nativeId} has native migration blockers: ${blockers.join(", ")}`);
+        warnings.push(`Pi session ${item.nativeId} has recoverable native state gaps: ${blockers.join(", ")}`);
       }
       if (item.previous !== undefined) {
         const native = objectValue(item.previous.native);
@@ -212,7 +234,7 @@ export async function scanPi(options: ScanPiOptions): Promise<ScanPiResult> {
       agent: "pi",
       scannedAt: new Date().toISOString(),
       sessions,
-      auxiliaryFiles: [],
+      auxiliaryFiles,
       warnings,
       scan: scanState(sourceKey, previous, sessions, reusedSessions),
     };

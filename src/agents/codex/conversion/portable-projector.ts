@@ -14,6 +14,7 @@ import {
 import type { PreparedArchiveEntries } from "../../../infrastructure/archive.js";
 import { codexSessionRef } from "../identity.js";
 import { parseCodexRollout } from "../history/rollout.js";
+import { synthesizedThreadRow } from "../storage/database.js";
 
 const CONVERTED_PROVIDER = "agenthist-converted";
 
@@ -92,8 +93,6 @@ export function projectPortableContextToCodex(
     session.messages.find((message) => message.role === "user")!,
   );
   const title = compact(session.title) || compact(firstUser);
-  const createdSeconds = Math.floor(created.valueOf() / 1000);
-  const updatedSeconds = Math.floor(updated.valueOf() / 1000);
   return {
     targetAgent: "codex",
     nativeId,
@@ -101,40 +100,20 @@ export function projectPortableContextToCodex(
     relativePath,
     rollout,
     provider: CONVERTED_PROVIDER,
-    thread: {
+    thread: synthesizedThreadRow({
       id: nativeId,
-      rollout_path: relativePath,
-      created_at: createdSeconds,
-      updated_at: updatedSeconds,
-      source: "exec",
-      model_provider: CONVERTED_PROVIDER,
+      rolloutPath: relativePath,
+      provider: CONVERTED_PROVIDER,
       cwd: session.workingDirectory,
       title,
-      sandbox_policy: '{"type":"read-only"}',
-      approval_mode: "never",
-      tokens_used: 0,
-      has_user_event: 1,
-      archived: 0,
-      archived_at: null,
-      git_sha: null,
-      git_branch: null,
-      git_origin_url: null,
-      cli_version: "agenthist-converted",
-      first_user_message: compact(firstUser),
-      agent_nickname: null,
-      agent_role: null,
-      memory_mode: "disabled",
       model: session.defaultModel,
-      reasoning_effort: null,
-      agent_path: null,
-      created_at_ms: created.valueOf(),
-      updated_at_ms: updated.valueOf(),
-      thread_source: "user",
-      preview: compact(firstUser),
-      recency_at: updatedSeconds,
-      recency_at_ms: updated.valueOf(),
-      history_mode: "legacy",
-    },
+      firstUserMessage: compact(firstUser),
+      createdAt: created,
+      updatedAt: updated,
+      archived: false,
+      cliVersion: "agenthist-converted",
+      historyMode: "legacy",
+    }),
     findings: normalizeConversionFindings([
       { code: "codex.session_identity.synthesized", disposition: "synthesized", count: 1 },
       { code: "codex.rollout_envelope.synthesized", disposition: "synthesized", count: session.messages.length + 2 },

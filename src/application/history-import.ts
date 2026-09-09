@@ -139,6 +139,7 @@ export interface ImportBlockedSession {
   readonly targetAgent: Agent;
   readonly sourceSessionRef: string;
   readonly findings: readonly ConversionFinding[];
+  readonly reason?: string;
 }
 
 export interface ImportHistoryResult {
@@ -165,10 +166,11 @@ interface PreparedAgentRestore {
 interface PreparedImportBatch {
   readonly restores: readonly PreparedAgentRestore[];
   readonly workspaces: readonly ImportWorkspaceProjection[];
+  readonly blockedSessions: readonly ImportBlockedSession[];
 }
 
-async function restoreWorkspace(root: string, agent: Agent): Promise<string> {
-  const directory = path.join(root, `restore-${agent}`);
+async function restoreWorkspace(root: string, agent: Agent, suffix = ""): Promise<string> {
+  const directory = path.join(root, `restore-${agent}${suffix}`);
   await mkdir(directory, { mode: 0o700 });
   return directory;
 }
@@ -209,30 +211,75 @@ async function prepareRestores(
   objects: ReadonlyMap<string, string>,
   workspace: string,
   sourcePathFlavor: PathFlavor,
+  allowUnusedPathMappings = false,
 ): Promise<PreparedImportBatch> {
   const mappings = parsePathMappings(options.pathMappings ?? [], { sourceFlavor: sourcePathFlavor });
   const workspaces = await planImportWorkspaces(entries, mappings);
   const prepared: PreparedAgentRestore[] = [];
+  const blockedSessions: ImportBlockedSession[] = [];
   for (const agent of AGENTS) {
     const agentEntries = entries.filter((entry) => entry.agent === agent);
     if (agentEntries.length === 0) continue;
     const agentWorkspace = await restoreWorkspace(workspace, agent);
+    const first = await agentAdapter(agent).nativeImport.prepare({
+      stateDirectory: options.stateDirectory,
+      entries: agentEntries,
+      objects,
+      providerPolicy: options.providerPolicy ?? "current",
+      pathMappings: mappings,
+      workspace: agentWorkspace,
+      source: restoreSourceOptions(options, agent),
+    });
+    const conflictReasons = new Map<string, Set<string>>();
+    const addConflict = (sessionRef: string, reason: string): void => {
+      const reasons = conflictReasons.get(sessionRef) ?? new Set<string>();
+      reasons.add(reason);
+      conflictReasons.set(sessionRef, reasons);
+    };
+    for (const item of first.result.items) {
+      if (item.classification === "conflict") addConflict(item.sessionRef, item.reason ?? "target history differs");
+    }
+    for (const resource of first.result.resources) {
+      if (resource.classification !== "conflict") continue;
+      for (const sessionRef of resource.sessionRefs) {
+        addConflict(sessionRef, resource.reason ?? `managed resource differs at ${resource.destination}`);
+      }
+    }
+    if (conflictReasons.size === 0) {
+      prepared.push({ agent, prepared: first });
+      continue;
+    }
+    const byTargetReference = new Map(agentEntries.map((entry) => [entry.sessionRef, entry]));
+    for (const [targetSessionRef, reasons] of conflictReasons) {
+      const entry = byTargetReference.get(targetSessionRef);
+      if (entry === undefined) throw new Error(`${agent} import conflict refers to an unknown session: ${targetSessionRef}`);
+      blockedSessions.push({
+        sourceAgent: entry.projection?.sourceAgent ?? agent,
+        targetAgent: agent,
+        sourceSessionRef: entry.projection?.sourceSessionRef ?? entry.sessionRef,
+        findings: [{ code: `${agent}.target_history.conflict`, disposition: "blocked", count: 1 }],
+        reason: [...reasons].join("; "),
+      });
+    }
+    const accepted = agentEntries.filter((entry) => !conflictReasons.has(entry.sessionRef));
+    if (accepted.length === 0) continue;
+    const retryWorkspace = await restoreWorkspace(workspace, agent, "-accepted");
     prepared.push({
       agent,
       prepared: await agentAdapter(agent).nativeImport.prepare({
         stateDirectory: options.stateDirectory,
-        entries: agentEntries,
+        entries: accepted,
         objects,
         providerPolicy: options.providerPolicy ?? "current",
         pathMappings: mappings,
-        workspace: agentWorkspace,
+        workspace: retryWorkspace,
         source: restoreSourceOptions(options, agent),
       }),
     });
   }
-  assertPathMappingsConsumed(mappings);
+  if (!allowUnusedPathMappings) assertPathMappingsConsumed(mappings);
   assertRestoreBatchReady(prepared);
-  return { restores: prepared, workspaces };
+  return { restores: prepared, workspaces, blockedSessions };
 }
 
 function restoreResult(item: PreparedAgentRestore): PreparedImportAgentResult {
@@ -336,12 +383,14 @@ function routeSummaries(
 
 function publicImportResult(
   mode: "dry_run" | "apply",
-  status: "ready" | "completed",
+  status: ImportHistoryStatus,
   sourceEntries: readonly ArchiveEntry[],
   targetEntries: readonly ImportEntry[],
   routes: readonly ImportRouteSummary[],
   completed: readonly PreparedImportAgentResult[],
   workspaces: readonly ImportWorkspaceProjection[],
+  conversions: readonly ImportConversionPlanItem[],
+  nativeBlockedSessions: readonly ImportBlockedSession[] = [],
 ): ImportHistoryResult {
   const dryRun = mode === "dry_run";
   const agents = completed.map((item): ImportAgentSummary => {
@@ -359,6 +408,14 @@ function publicImportResult(
     workspaces.flatMap((workspace) => workspace.sessionRefs.map((sessionRef) => [sessionRef, workspace] as const)),
   );
   const entryByTargetSession = new Map(targetEntries.map((entry) => [entry.sessionRef, entry]));
+  const blockedSessions = [...conversions
+    .filter((item) => item.status === "blocked")
+    .map((item): ImportBlockedSession => ({
+      sourceAgent: item.sourceAgent,
+      targetAgent: item.targetAgent,
+      sourceSessionRef: item.sourceSessionRef,
+      findings: item.findings,
+    })), ...nativeBlockedSessions];
   return {
     mode,
     status,
@@ -366,8 +423,8 @@ function publicImportResult(
     newSessions,
     written: dryRun ? 0 : newSessions,
     alreadyPresent: agents.reduce((total, item) => total + item.alreadyPresent, 0),
-    blocked: 0,
-    blockedSessions: [],
+    blocked: blockedSessions.length,
+    blockedSessions,
     routes,
     agents,
     workspaces: workspaces.map((workspace) => ({
@@ -515,7 +572,11 @@ async function prepareImportPlan(
     },
   });
   const routes = routeSummaries(sourceEntries, destinations, conversions.items);
-  if (conversions.statusCounts.blocked !== 0) {
+  const blockedReferences = new Set(conversions.items
+    .filter((item) => item.status === "blocked")
+    .map((item) => item.sourceSessionRef));
+  const acceptedSourceEntries = sourceEntries.filter((entry) => !blockedReferences.has(entry.sessionRef));
+  if (acceptedSourceEntries.length === 0 && conversions.statusCounts.blocked !== 0) {
     const mappings = parsePathMappings(options.pathMappings ?? [], { sourceFlavor: sourcePathFlavor });
     const routeEntries = sourceEntries.map((entry) => ({
       agent: destinations.get(entry.sessionRef)!,
@@ -532,7 +593,7 @@ async function prepareImportPlan(
       blockedWorkspaces,
     };
   }
-  const projectedEntries = targetEntries(sourceEntries, destinations, conversions.entries);
+  const projectedEntries = targetEntries(acceptedSourceEntries, destinations, conversions.entries);
   const objects = new Map(extractedObjects);
   for (const source of conversions.sources) {
     if (objects.has(source.id)) throw new Error(`projected import object collides: ${source.id}`);
@@ -543,7 +604,14 @@ async function prepareImportPlan(
     objects,
     routes,
     conversions,
-    restores: await prepareRestores(options, projectedEntries, objects, workspace, sourcePathFlavor),
+    restores: await prepareRestores(
+      options,
+      projectedEntries,
+      objects,
+      workspace,
+      sourcePathFlavor,
+      conversions.statusCounts.blocked !== 0,
+    ),
   };
 }
 
@@ -574,12 +642,16 @@ async function importPreparedHistoryUnlocked(
         }
         return publicImportResult(
           options.mode,
-          "ready",
+          prepared.restores.restores.length === 0 && prepared.restores.blockedSessions.length !== 0
+            ? "blocked"
+            : "ready",
           source.entries,
           prepared.targetEntries,
           prepared.routes,
           prepared.restores.restores.map(restoreResult),
           prepared.restores.workspaces,
+          prepared.conversions.items,
+          prepared.restores.blockedSessions,
         );
       });
     }
@@ -609,12 +681,16 @@ async function importPreparedHistoryUnlocked(
       }
       return publicImportResult(
         options.mode,
-        "completed",
+        prepared.restores.restores.length === 0 && prepared.restores.blockedSessions.length !== 0
+          ? "blocked"
+          : "completed",
         source.entries,
         prepared.targetEntries,
         prepared.routes,
         completed,
         prepared.restores.workspaces,
+        prepared.conversions.items,
+        prepared.restores.blockedSessions,
       );
     });
   } finally {

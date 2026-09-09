@@ -285,11 +285,13 @@ async function captureRollouts(
   stateDirectory: string,
   previous: AgentSnapshot | undefined,
   previousByRaw: ReadonlyMap<string, StoredSession>,
+  warnings: string[],
+  auxiliaryFiles: string[],
 ): Promise<CapturedRollout[]> {
   const captured: CapturedRollout[] = [];
   for (let offset = 0; offset < rollouts.length; offset += ROLLOUT_CAPTURE_CONCURRENCY) {
     const batch = rollouts.slice(offset, offset + ROLLOUT_CAPTURE_CONCURRENCY);
-    const settled = await Promise.allSettled(batch.map(async (rollout): Promise<CapturedRollout> => {
+    const settled = await Promise.allSettled(batch.map(async (rollout): Promise<CapturedRollout | undefined> => {
       const fingerprint = metadataFingerprint("codex-rollout/v1", [
         rollout.relativePath,
         rollout.archived,
@@ -303,11 +305,20 @@ async function captureRollouts(
       }
       const destination = path.join(workspace.rawRoot, ...rollout.relativePath.split("/"));
       await copyStableFile(rollout.sourcePath, destination);
-      return { rollout, parsed: await parseCodexRollout(destination), fingerprint, reused: false };
+      try {
+        return { rollout, parsed: await parseCodexRollout(destination), fingerprint, reused: false };
+      } catch (error) {
+        auxiliaryFiles.push(rollout.relativePath);
+        warnings.push(
+          `skipped unreadable Codex session ${rollout.relativePath}: ` +
+          (error instanceof Error ? error.message : "rollout validation failed"),
+        );
+        return undefined;
+      }
     }));
     for (const result of settled) {
       if (result.status === "rejected") throw result.reason;
-      captured.push(result.value);
+      if (result.value !== undefined) captured.push(result.value);
     }
   }
   return captured;
@@ -384,16 +395,19 @@ export async function scanCodex(options: ScanCodexOptions): Promise<ScanCodexRes
       options.stateDirectory,
       previous,
       previousByRaw,
+      warnings,
+      auxiliaryFiles,
     );
     for (const { rollout, parsed, fingerprint } of capturedRollouts) {
       if (seen.has(parsed.nativeId)) {
         throw new Error(`Codex session appears more than once: ${parsed.nativeId}`);
       }
       seen.add(parsed.nativeId);
-      const thread = threads.get(parsed.nativeId);
+      let thread = threads.get(parsed.nativeId);
       const threadArchived = threadBoolean(thread, "archived");
       if (threadArchived !== undefined && threadArchived !== rollout.archived) {
-        throw new Error(`Codex archived state disagrees for session: ${parsed.nativeId}`);
+        warnings.push(`ignored inconsistent Codex thread row for ${parsed.nativeId}: archived state disagrees`);
+        thread = undefined;
       }
       if (thread !== undefined) {
         const rolloutPath = threadString(thread, "rollout_path");
@@ -403,16 +417,19 @@ export async function scanCodex(options: ScanCodexOptions): Promise<ScanCodexRes
           !path.isAbsolute(rolloutPath) ||
           !samePath(path.resolve(rolloutPath), path.resolve(rollout.sourcePath), pathFlavorForPlatform())
         ) {
-          throw new Error(`Codex rollout path disagrees for session: ${parsed.nativeId}`);
+          warnings.push(`ignored inconsistent Codex thread row for ${parsed.nativeId}: rollout path disagrees`);
+          thread = undefined;
         }
-        if (provider === "" || provider !== parsed.provider) {
-          throw new Error(`Codex provider disagrees for session: ${parsed.nativeId}`);
+        if (thread !== undefined && (provider === "" || provider !== parsed.provider)) {
+          warnings.push(`ignored inconsistent Codex thread row for ${parsed.nativeId}: provider disagrees`);
+          thread = undefined;
         }
-        if (
+        if (thread !== undefined && (
           !path.isAbsolute(cwd) || !path.isAbsolute(parsed.cwd) ||
           !samePath(path.resolve(cwd), path.resolve(parsed.cwd), pathFlavorForPlatform())
-        ) {
-          throw new Error(`Codex cwd disagrees for session: ${parsed.nativeId}`);
+        )) {
+          warnings.push(`ignored inconsistent Codex thread row for ${parsed.nativeId}: cwd disagrees`);
+          thread = undefined;
         }
       }
       if (thread === undefined && threads.size !== 0) {
@@ -461,9 +478,9 @@ export async function scanCodex(options: ScanCodexOptions): Promise<ScanCodexRes
               : invalidSpawnThreads.has(parsed.nativeId) ? "invalid" : "valid",
           },
           thread: thread ?? null,
-          section: threadSectionForThread(thread, sections),
-          dynamicTools: dynamicTools.get(parsed.nativeId) ?? [],
-          goal: goals.get(parsed.nativeId) ?? null,
+          section: thread === undefined ? null : threadSectionForThread(thread, sections),
+          dynamicTools: thread === undefined ? [] : dynamicTools.get(parsed.nativeId) ?? [],
+          goal: thread === undefined ? null : goals.get(parsed.nativeId) ?? null,
           unsupportedRelationStatus: thread === undefined
             ? "unknown"
             : unsupportedRelations.has(parsed.nativeId) ? "present" : "empty",

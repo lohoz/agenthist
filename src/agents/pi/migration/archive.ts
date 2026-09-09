@@ -98,11 +98,8 @@ export function closePiSelection(
     const session = byReference.get(sessionRef);
     if (session === undefined) throw new Error(`Pi parent session closure is incomplete: ${sessionRef}`);
     const descriptor = readPiNativeDescriptor(session);
-    if (descriptor.migrationBlockers.length !== 0) {
-      throw new Error(`Pi session cannot be exported without losing native history: ${sessionRef}`);
-    }
     if (session.rawFiles.length !== 1 || session.rawFiles[0] !== descriptor.relativePath) {
-      throw new Error(`Pi session cannot be exported without losing native history: ${sessionRef}`);
+      throw new Error(`Pi captured session carrier is missing or ambiguous: ${sessionRef}`);
     }
     if (descriptor.parentSessionRef !== null && !included.has(descriptor.parentSessionRef)) {
       included.add(descriptor.parentSessionRef);
@@ -184,7 +181,6 @@ export function validatePiArchiveEntries(
       entry.agent !== "pi" || piSessionRef(canonicalPiSessionId(entry.nativeId)) !== entry.sessionRef ||
       entry.nativeArchived || entry.objects.length !== 1 || binding?.role !== "session" ||
       binding.relativePath !== descriptor.relativePath || objects.get(binding.id)?.kind !== "pi.session-jsonl" ||
-      descriptor.migrationBlockers.length !== 0 ||
       (descriptor.parentSessionRef !== null && !references.has(descriptor.parentSessionRef))
     ) throw new Error(`Pi archive entry is invalid: ${entry.sessionRef}`);
   }
@@ -202,12 +198,7 @@ export async function validatePiArchiveObjects(
     const descriptor = readPiNativeDescriptor(entry);
     if (
       parsed.header.id !== entry.nativeId || piSessionRef(parsed.header.id) !== entry.sessionRef ||
-      parsed.header.cwd !== entry.context || parsed.header.parentSession !== (descriptor.parentSession ?? undefined) ||
-      parsed.title !== entry.title || parsed.model !== entry.model || parsed.provider !== entry.provider ||
-      parsed.createdAt !== entry.createdAt || parsed.updatedAt !== entry.updatedAt ||
-      parsed.leafId !== descriptor.leafId || parsed.roots !== descriptor.roots ||
-      parsed.branchPoints !== descriptor.branchPoints || parsed.entries.length !== descriptor.entries ||
-      parsed.messageCount !== descriptor.messages
+      parsed.header.cwd !== entry.context || parsed.header.parentSession !== (descriptor.parentSession ?? undefined)
     ) throw new Error(`Pi archive metadata disagrees with its session: ${entry.sessionRef}`);
   }
 }

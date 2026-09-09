@@ -3,17 +3,6 @@ import { readFile } from "node:fs/promises";
 import { canonicalClaudeUuid } from "../identity.js";
 
 const TASK_ID = /^(?:0|[1-9][0-9]*)$/;
-const TASK_FIELDS = new Set([
-  "id",
-  "subject",
-  "description",
-  "activeForm",
-  "owner",
-  "status",
-  "blocks",
-  "blockedBy",
-  "metadata",
-]);
 const TASK_STATUSES = new Set(["pending", "in_progress", "completed"]);
 
 export type ClaudeTaskFileRole = "task-entry" | "task-highwatermark";
@@ -86,7 +75,7 @@ function taskStrings(value: unknown): string[] | undefined {
 
 function taskItem(value: unknown, expectedId: string): ClaudeTaskItem | undefined {
   const item = objectValue(value);
-  if (item === undefined || Object.keys(item).some((field) => !TASK_FIELDS.has(field))) return undefined;
+  if (item === undefined) return undefined;
   const id = canonicalTaskId(item.id);
   const blocks = taskStrings(item.blocks);
   const blockedBy = taskStrings(item.blockedBy);

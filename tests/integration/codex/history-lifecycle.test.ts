@@ -647,21 +647,24 @@ test("Codex scan remains listable, searchable, and readable after the native sou
         skipped_sessions: Array<{ session_ref: string; reason: string }>;
       };
     }).data;
-    assert.equal(mixedData.entries, 3);
-    assert.deepEqual(mixedData.skipped_sessions.map((session) => session.session_ref), [incompleteReference]);
-    assert.match(mixedData.skipped_sessions[0]!.reason, /no restorable thread row/);
+    assert.equal(mixedData.entries, 4);
+    assert.deepEqual(mixedData.skipped_sessions, []);
     const mixedInspect = await runCli(["--json", "inspect", mixedArchive], runtime);
     assert.equal(mixedInspect.exitCode, 0, mixedInspect.stderr);
     assert.equal((JSON.parse(mixedInspect.stdout) as {
       data: { entries: Array<{ session_ref: string }> };
-    }).data.entries.some((entry) => entry.session_ref === incompleteReference), false);
+    }).data.entries.some((entry) => entry.session_ref === incompleteReference), true);
+    const incompleteArchive = path.join(root, "codex-incomplete.agenthist");
     const incompleteExport = await runCli([
       "--json", "--state-dir", state, "export", "--session", incompleteReference,
-      "-o", path.join(root, "codex-incomplete.agenthist"),
+      "-o", incompleteArchive,
     ], runtime);
-    assert.equal(incompleteExport.exitCode, 3);
-    assert.match((JSON.parse(incompleteExport.stdout) as { error: { message: string } }).error.message,
-      /no restorable thread row/);
+    assert.equal(incompleteExport.exitCode, 0, incompleteExport.stderr);
+    const incompleteInspect = await runCli(["--json", "inspect", incompleteArchive], runtime);
+    assert.equal(incompleteInspect.exitCode, 0, incompleteInspect.stderr);
+    assert.deepEqual((JSON.parse(incompleteInspect.stdout) as {
+      data: { entries: Array<{ session_ref: string }> };
+    }).data.entries.map((entry) => entry.session_ref), [incompleteReference]);
 
     await writeFile(incrementalPath, rollout(
       incrementalId,
@@ -1218,6 +1221,44 @@ test("Codex scan remains listable, searchable, and readable after the native sou
       targetListData.sessions.find((session) => session.title === "Research Codex")?.tags,
       ["library-tag-unique"],
     );
+
+    const recoveredWorkspace = path.join(targetWork, "recovered");
+    await mkdir(recoveredWorkspace, { recursive: true });
+    const recovered = await runCli([
+      ...commonImportArguments,
+      "import", incompleteArchive,
+      "--target", `codex=${targetHome}`,
+      "--codex-provider", "preserve",
+      "--map-path", `/work/agenthist=${recoveredWorkspace}`,
+      "--apply",
+    ], runtime);
+    assert.equal(recovered.exitCode, 0, recovered.stderr);
+    const recoveredData = (JSON.parse(recovered.stdout) as {
+      data: {
+        written: number;
+        items: Array<{ target_native_id: string; destination: string; cwd: string }>;
+      };
+    }).data;
+    assert.equal(recoveredData.written, 1);
+    assert.equal(recoveredData.items[0]!.target_native_id, incrementalId);
+    assert.equal(recoveredData.items[0]!.cwd, recoveredWorkspace);
+    assert.equal((await readFile(recoveredData.items[0]!.destination, "utf8")).includes(
+      "Codex incremental initial answer",
+    ), true);
+    const recoveredDatabase = new DatabaseSync(path.join(targetSQLite, CODEX_STATE_STORE), { readOnly: true });
+    const recoveredThread = recoveredDatabase.prepare(
+      "SELECT id, rollout_path, cwd, model_provider FROM threads WHERE id = ?",
+    ).get(incrementalId) as {
+      id: string;
+      rollout_path: string;
+      cwd: string;
+      model_provider: string;
+    } | undefined;
+    recoveredDatabase.close();
+    assert.equal(recoveredThread?.id, incrementalId);
+    assert.equal(recoveredThread?.rollout_path, recoveredData.items[0]!.destination);
+    assert.equal(recoveredThread?.cwd, recoveredWorkspace);
+    assert.equal(recoveredThread?.model_provider, "test-provider");
 
     const shown = await runCli([
       "--json",

@@ -11,6 +11,7 @@ import type { AgentSnapshot, StoredSession } from "../../../domain/history.js";
 import {
   hasClosedHistoricalToolSequence,
   PORTABLE_CONTEXT_SCHEMA,
+  repairPortableMessages,
   renderPortableContextMessage,
   type PortableContextMessage,
   type PortableContextSession,
@@ -249,12 +250,12 @@ function normalizeCodexPortableContext(
   }
   const findings: ConversionFinding[] = [];
   if (readCodexUnsupportedRelationStatus(source) !== "empty") {
-    findings.push(blocked("codex.native_relations.unsupported"));
+    findings.push({ code: "codex.native_relations.skipped", disposition: "skipped", count: 1 });
   }
   const lineage = readCodexLineage(source);
   const spawn = readCodexSpawn(source);
   if (spawn.relationStatus !== "valid") {
-    findings.push(blocked("codex.spawn_graph.unsupported"));
+    findings.push({ code: "codex.spawn_graph.skipped", disposition: "skipped", count: 1 });
   } else if (spawn.componentNativeIds.length > 1 || spawn.incoming !== null) {
     findings.push({
       code: "codex.spawn_relation.skipped",
@@ -264,7 +265,7 @@ function normalizeCodexPortableContext(
   }
   if (lineage.historyBase !== null) {
     findings.push(materializedHistoryBaseSegments === 0
-      ? blocked("codex.paginated_lineage.unsupported")
+      ? { code: "codex.paginated_lineage.skipped", disposition: "skipped", count: 1 }
       : {
         code: "codex.paginated_lineage.materialized",
         disposition: "skipped",
@@ -284,7 +285,7 @@ function normalizeCodexPortableContext(
     lineage.parentThreadId !== null &&
     (spawn.incoming === null || spawn.incoming.parent_thread_id !== lineage.parentThreadId)
   ) {
-    findings.push(blocked("codex.parent_thread.unsupported"));
+    findings.push({ code: "codex.parent_thread.skipped", disposition: "skipped", count: 1 });
   }
   if (lineage.forkedFromId !== null) {
     findings.push({ code: "codex.fork_lineage.skipped", disposition: "skipped", count: 1 });
@@ -313,7 +314,9 @@ function normalizeCodexPortableContext(
   if (readCodexSection(source) !== null) {
     findings.push({ code: "codex.thread_section.skipped", disposition: "skipped", count: 1 });
   }
-  if (source.rawFiles.length !== 1) findings.push(blocked("codex.rollout_closure.unsupported"));
+  if (source.rawFiles.length !== 1) {
+    findings.push({ code: "codex.rollout_closure.partial", disposition: "degraded", count: 1 });
+  }
   if (!path.isAbsolute(source.context)) findings.push(blocked("portable.working_directory.invalid"));
 
   const gaps = source.conversation.filter((item) => item.kind === "gap");
@@ -375,16 +378,32 @@ function normalizeCodexPortableContext(
     });
   }
   if (interAgentCommunication !== 0) {
-    findings.push(blocked("codex.inter_agent_communication.unsupported", interAgentCommunication));
+    findings.push({
+      code: "codex.inter_agent_communication.skipped",
+      disposition: "skipped",
+      count: interAgentCommunication,
+    });
   }
-  if (threadRollback !== 0) findings.push(blocked("codex.thread_rollback.unsupported", threadRollback));
-  if (turnAborted !== 0) findings.push(blocked("codex.turn_aborted.unsupported", turnAborted));
-  if (rolloutItems !== 0) findings.push(blocked("codex.rollout_item.unprojectable", rolloutItems));
-  if (unprojectableTools !== 0) findings.push(blocked("codex.tool_history.unprojectable", unprojectableTools));
-  if (unprojectable !== 0) findings.push(blocked("codex.native_content.unprojectable", unprojectable));
+  if (threadRollback !== 0) {
+    findings.push({ code: "codex.thread_rollback.skipped", disposition: "skipped", count: threadRollback });
+  }
+  if (turnAborted !== 0) {
+    findings.push({ code: "codex.turn_aborted.skipped", disposition: "skipped", count: turnAborted });
+  }
+  if (rolloutItems !== 0) {
+    findings.push({ code: "codex.rollout_item.skipped", disposition: "skipped", count: rolloutItems });
+  }
+  if (unprojectableTools !== 0) {
+    findings.push({ code: "codex.tool_history.skipped", disposition: "skipped", count: unprojectableTools });
+  }
+  if (unprojectable !== 0) {
+    findings.push({ code: "codex.native_content.skipped", disposition: "skipped", count: unprojectable });
+  }
   const unsupportedRoles = source.conversation.filter((item) =>
     item.kind === "message" && item.role !== "user" && item.role !== "assistant").length;
-  if (unsupportedRoles !== 0) findings.push(blocked("portable.message_role.unsupported", unsupportedRoles));
+  if (unsupportedRoles !== 0) {
+    findings.push({ code: "portable.message_role.skipped", disposition: "skipped", count: unsupportedRoles });
+  }
 
   const messages: PortableContextMessage[] = [];
   let previousRole: "user" | "assistant" | undefined;
@@ -585,13 +604,24 @@ function normalizeCodexPortableContext(
       ? { code, disposition: "degraded", count }
       : knownNotes.has(code)
         ? { code, disposition: "skipped", count }
-        : blocked("codex.tool_note.unknown", count));
+        : { code: "codex.tool_note.unknown", disposition: "skipped", count });
   }
-  if (messages.length === 0) findings.push(blocked("portable.messages.empty"));
-  if (messages[0]?.role !== "user" || messages.at(-1)?.role !== "assistant") invalidSequence++;
-  if (invalidTimestamp !== 0) findings.push(blocked("portable.message_timestamp.invalid", invalidTimestamp));
-  if (invalidContent !== 0) findings.push(blocked("portable.message_content.invalid", invalidContent));
-  if (invalidSequence !== 0) findings.push(blocked("portable.message_sequence.unsupported", invalidSequence));
+  const repaired = repairPortableMessages("codex", messages, source.createdAt);
+  if (repaired.messages.length === 0 || !repaired.messages.some((message) => message.role === "user")) {
+    findings.push(blocked("portable.messages.empty"));
+  }
+  const repairedTimestamps = Math.max(invalidTimestamp, repaired.repairedTimestamps);
+  const skippedContent = Math.max(invalidContent, repaired.skippedBlocks + repaired.skippedMessages);
+  const repairedSequence = Math.max(invalidSequence, repaired.coalescedMessages);
+  if (repairedTimestamps !== 0) {
+    findings.push({ code: "portable.message_timestamp.repaired", disposition: "degraded", count: repairedTimestamps });
+  }
+  if (skippedContent !== 0) {
+    findings.push({ code: "portable.message_content.skipped", disposition: "skipped", count: skippedContent });
+  }
+  if (repairedSequence !== 0) {
+    findings.push({ code: "portable.message_sequence.coalesced", disposition: "degraded", count: repairedSequence });
+  }
 
   findings.push({ code: "codex.native_envelope.skipped", disposition: "skipped", count: 1 });
   if (source.provider !== "") findings.push({ code: "codex.provider_metadata.skipped", disposition: "skipped", count: 1 });
@@ -610,7 +640,7 @@ function normalizeCodexPortableContext(
       workingDirectory: path.normalize(source.context),
       defaultModel: source.model,
       title: source.title,
-      messages,
+      messages: repaired.messages,
     },
   };
 }

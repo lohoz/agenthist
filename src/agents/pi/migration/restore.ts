@@ -177,11 +177,7 @@ async function buildRestorePlan(options: RestorePiOptions): Promise<RestorePlan>
     const parsed = await parsePiSession(projected, entry.updatedAt);
     if (
       parsed.header.id !== entry.nativeId || parsed.header.cwd !== cwd || parsed.header.parentSession !== parentSession ||
-      parsed.title !== entry.title || parsed.model !== entry.model || parsed.provider !== entry.provider ||
-      parsed.createdAt !== entry.createdAt || parsed.updatedAt !== entry.updatedAt ||
-      parsed.leafId !== descriptor.leafId || parsed.roots !== descriptor.roots ||
-      parsed.branchPoints !== descriptor.branchPoints || parsed.entries.length !== descriptor.entries ||
-      parsed.messageCount !== descriptor.messages
+      parsed.header.version !== 3
     ) throw new Error(`Pi path projection changed native history: ${entry.sessionRef}`);
     const duplicate = existing.get(entry.nativeId);
     const classification = duplicate !== undefined && duplicate !== destination

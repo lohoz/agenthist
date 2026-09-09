@@ -81,7 +81,7 @@ The default is the provider currently configured on the target machine. `preserv
 | `degraded` | Some content was omitted or reconstructed; the session can still be imported |
 | `blocked` | The session cannot be converted reliably |
 
-`degraded` sessions can be written. If any selected session is `blocked`, the operation fails without writing. In interactive mode, exclude blocked sessions and preview again.
+`degraded` sessions can be written. Blocked sessions and target conflicts are reported and skipped while eligible sessions continue. If none can proceed, no changes are written. In interactive mode, you can exclude blocked sessions and preview again.
 
 Duplicate sessions appear as `already on target`. Content conflicts are reported before writing. A successful write creates a [`transaction`](transaction.md).
 

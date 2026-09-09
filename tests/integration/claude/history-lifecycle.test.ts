@@ -659,7 +659,7 @@ async function writeClaudeHistory(configRoot: string): Promise<{
   };
 }
 
-async function assertUnknownSubagentMetadataIsRejected(configRoot: string): Promise<void> {
+async function assertUnknownSubagentMetadataIsAccepted(configRoot: string): Promise<void> {
   const projectCarrier = SOURCE_RELOCATED_WORK_CARRIER;
   const project = path.join(configRoot, "projects", projectCarrier);
   const subagents = path.join(project, SECOND_SESSION, "subagents");
@@ -668,7 +668,7 @@ async function assertUnknownSubagentMetadataIsRejected(configRoot: string): Prom
   const metadata = JSON.parse(original) as Record<string, unknown>;
   await writeFile(metadataPath, `${JSON.stringify({ ...metadata, futureField: true })}\n`, { mode: 0o600 });
   try {
-    await assert.rejects(validateClaudeSubagentBundles({
+    const bundles = await validateClaudeSubagentBundles({
       mainTranscriptPath: path.join(project, `${SECOND_SESSION}.jsonl`),
       sessionId: SECOND_SESSION,
       projectCarrier,
@@ -685,7 +685,8 @@ async function assertUnknownSubagentMetadataIsRejected(configRoot: string): Prom
           filePath: metadataPath,
         },
       ],
-    }), /metadata is incomplete/);
+    });
+    assert.equal(bundles.length, 1);
   } finally {
     await writeFile(metadataPath, original, { mode: 0o600 });
   }
@@ -699,7 +700,7 @@ test("Claude readable history migrates validated native closures and opaque sess
     await assertPreconditionFailureIsTerminal(root);
     await mkdir(configRoot, { recursive: true });
     const fixture = await writeClaudeHistory(configRoot);
-    await assertUnknownSubagentMetadataIsRejected(configRoot);
+    await assertUnknownSubagentMetadataIsAccepted(configRoot);
     const runtime = { environment: { HOME: root }, cwd: root, home: root };
     const scanned = await runCli([
       "--json", "--state-dir", state, "--claude-config-dir", configRoot,
@@ -839,9 +840,7 @@ test("Claude readable history migrates validated native closures and opaque sess
       "--json", "--state-dir", state, "export", "--session", firstReference,
       "-o", path.join(root, "coordinator.agenthist"),
     ], runtime);
-    assert.equal(coordinatorExport.exitCode, 3);
-    assert.match((JSON.parse(coordinatorExport.stdout) as { error: { message: string } }).error.message,
-      /coordinator session cannot be exported without team runtime state/);
+    assert.equal(coordinatorExport.exitCode, 0, coordinatorExport.stderr);
     assert.equal(
       claudeSessionRef(
         "abcdef01-2345-4abc-8def-0123456789ab",
@@ -908,14 +907,11 @@ test("Claude readable history migrates validated native closures and opaque sess
     assert.deepEqual(inspectedEntries.map((entry) => [entry.agent, entry.session_ref]), [["claude", migratedReference]]);
 
     const blockedReference = claudeSessionRef(THIRD_SESSION, "dddddddd-dddd-4ddd-8ddd-ddddddddddd1");
-    const blocked = await runCli([
+    const formerlyBlocked = await runCli([
       "--json", "--state-dir", state, "export", "--session", blockedReference,
       "-o", path.join(root, "blocked.agenthist"),
     ], runtime);
-    assert.equal(blocked.exitCode, 3);
-    assert.equal(blocked.stderr, "");
-    assert.match((JSON.parse(blocked.stdout) as { error: { message: string } }).error.message,
-      /cannot be exported without losing native history/);
+    assert.equal(formerlyBlocked.exitCode, 0, formerlyBlocked.stderr);
 
     const mixedArchive = path.join(root, "claude-mixed.agenthist");
     const mixedExport = await runCli([
@@ -928,24 +924,14 @@ test("Claude readable history migrates validated native closures and opaque sess
         skipped_sessions: Array<{ session_ref: string; reason: string }>;
       };
     }).data;
-    assert.equal(mixedData.entries, 1);
-    assert.deepEqual(
-      mixedData.skipped_sessions.map((session) => session.session_ref).sort(),
-      [firstReference, blockedReference].sort(),
-    );
-    assert.match(
-      mixedData.skipped_sessions.find((session) => session.session_ref === firstReference)!.reason,
-      /coordinator session/,
-    );
-    assert.match(
-      mixedData.skipped_sessions.find((session) => session.session_ref === blockedReference)!.reason,
-      /cannot be exported without losing native history/,
-    );
+    assert.equal(mixedData.entries, 3);
+    assert.deepEqual(mixedData.skipped_sessions, []);
     const mixedInspect = await runCli(["--json", "inspect", mixedArchive], runtime);
     assert.equal(mixedInspect.exitCode, 0, mixedInspect.stderr);
     assert.deepEqual((JSON.parse(mixedInspect.stdout) as {
       data: { entries: Array<{ session_ref: string }> };
-    }).data.entries.map((entry) => entry.session_ref), [migratedReference]);
+    }).data.entries.map((entry) => entry.session_ref).sort(),
+      [firstReference, migratedReference, blockedReference].sort());
 
     const targetConfig = path.join(root, "target-claude");
     const targetWork = path.join(root, "target-work");
@@ -954,6 +940,19 @@ test("Claude readable history migrates validated native closures and opaque sess
     await mkdir(targetConfig, { recursive: true });
     await mkdir(targetWork, { recursive: true });
     await mkdir(targetHistoricalWork, { recursive: true });
+    const mixedTargetConfig = path.join(root, "target-claude-mixed");
+    await mkdir(mixedTargetConfig, { recursive: true });
+    const mixedImport = await runCli([
+      "--json", "--state-dir", path.join(root, "target-mixed-state"),
+      "import", mixedArchive,
+      "--target", `claude=${mixedTargetConfig}`,
+      "--map-path", `${SOURCE_RELOCATED_WORK}=${targetWork}`,
+      "--map-path", `${SOURCE_WORK}=${targetHistoricalWork}`,
+      "--apply",
+    ], runtime);
+    assert.equal(mixedImport.exitCode, 0, mixedImport.stdout || mixedImport.stderr);
+    assert.equal((JSON.parse(mixedImport.stdout) as { data: { written: number } }).data.written, 3);
+
     const importArguments = [
       "--json", "--state-dir", targetState,
       "import", archive,

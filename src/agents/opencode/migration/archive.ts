@@ -88,21 +88,6 @@ function assertOpenCodeSessionMigratable(
   descriptor: ReturnType<typeof nativeDescriptor>,
 ): void {
   const sessionRef = session.sessionRef;
-  if (descriptor.relationStatus !== "valid") {
-    throw new Error(`OpenCode session relation closure is invalid: ${sessionRef}`);
-  }
-  if (descriptor.pendingInputStatus === "present") {
-    throw new Error(`OpenCode session has pending input and cannot be migrated: ${sessionRef}`);
-  }
-  if (descriptor.pendingInputStatus === "unknown") {
-    throw new Error(`OpenCode session input state cannot be classified: ${sessionRef}`);
-  }
-  if (descriptor.revertStatus === "present") {
-    throw new Error(`OpenCode session has an active revert and cannot be migrated: ${sessionRef}`);
-  }
-  if (descriptor.revertStatus === "unknown") {
-    throw new Error(`OpenCode session revert state cannot be classified: ${sessionRef}`);
-  }
   const expectedSidecar = `opencode/session_diff/${session.nativeId}.json`;
   if (descriptor.sidecars.some((sidecar) => sidecar !== expectedSidecar) || descriptor.sidecars.length > 1) {
     throw new Error(`OpenCode session_diff ownership is not portable: ${sessionRef}`);
@@ -383,9 +368,6 @@ export function validateOpenCodeArchiveEntries(
     const capturedSession = actual.get(entry.sessionRef);
     if (capturedSession?.nativeId !== entry.nativeId ||
       nativeDescriptor(entry).component.join("\0") !== nativeDescriptor(capturedSession).component.join("\0") ||
-      nativeDescriptor(entry).relationStatus !== nativeDescriptor(capturedSession).relationStatus ||
-      nativeDescriptor(entry).pendingInputStatus !== nativeDescriptor(capturedSession).pendingInputStatus ||
-      nativeDescriptor(entry).revertStatus !== nativeDescriptor(capturedSession).revertStatus ||
       nativeDescriptor(entry).sidecars.join("\0") !== nativeDescriptor(capturedSession).sidecars.join("\0") ||
       nativeDescriptor(entry).plan !== nativeDescriptor(capturedSession).plan ||
       JSON.stringify(nativeDescriptor(entry).toolOutputs) !== JSON.stringify(nativeDescriptor(capturedSession).toolOutputs)) {

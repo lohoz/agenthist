@@ -38,6 +38,7 @@ import {
   threadDynamicToolsEqual,
   threadRowsEqual,
   threadSpawnEdgesEqual,
+  synthesizedThreadRow,
   unsupportedRelatedThreadIds,
   validateDynamicToolTarget,
   validateThreadShape,
@@ -130,13 +131,10 @@ function objectValue(value: JsonValue | undefined): Record<string, JsonValue> | 
     : undefined;
 }
 
-function nativeThread(entry: ImportEntry): ThreadRow {
+function nativeThread(entry: ImportEntry): ThreadRow | undefined {
   const native = objectValue(entry.native);
   const thread = objectValue(native?.thread);
-  if (thread === undefined) {
-    throw new Error(`Codex session has no restorable SQLite thread: ${entry.sessionRef}`);
-  }
-  return { ...thread };
+  return thread === undefined ? undefined : { ...thread };
 }
 
 function targetThread(
@@ -144,8 +142,22 @@ function targetThread(
   columns: ReadonlyMap<string, ThreadColumn>,
 ): ThreadRow {
   const thread = nativeThread(entry);
-  if (entry.projection === undefined) return thread;
-  return Object.fromEntries(Object.entries(thread).filter(([name]) => columns.has(name)));
+  if (thread !== undefined && entry.projection === undefined) return thread;
+  const synthesized = thread ?? synthesizedThreadRow({
+    id: entry.nativeId,
+    rolloutPath: entry.objects[0]?.relativePath ?? "",
+    provider: entry.provider,
+    cwd: entry.context,
+    title: entry.title,
+    model: entry.model,
+    firstUserMessage: entry.title,
+    createdAt: new Date(entry.createdAt),
+    updatedAt: new Date(entry.updatedAt),
+    archived: entry.nativeArchived,
+    cliVersion: "agenthist-recovered",
+    historyMode: readCodexLineage(entry).historyMode,
+  });
+  return Object.fromEntries(Object.entries(synthesized).filter(([name]) => columns.has(name)));
 }
 
 function resolveProvider(policy: string, current: string, entry: ImportEntry): string {
@@ -243,7 +255,8 @@ async function buildRestorePlan(options: RestoreCodexOptions): Promise<RestorePl
       validateThreadShape(thread, columns);
       const dynamicTools = readCodexDynamicTools(entry);
       validateDynamicToolTarget(database, dynamicTools, entry.nativeId);
-      const spawnEdge = readCodexSpawn(entry).incoming;
+      const spawn = readCodexSpawn(entry);
+      const spawnEdge = spawn.relationStatus === "valid" ? spawn.incoming : null;
       validateThreadSpawnTarget(database, spawnEdge, entry.nativeId);
       const goal = readCodexGoal(entry);
       if (goal !== null && goalColumns !== undefined) validateThreadGoalShape(goal, goalColumns);

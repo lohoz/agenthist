@@ -137,12 +137,21 @@ export async function scanClaude(options: ScanClaudeOptions): Promise<ScanClaude
         continue;
       }
       const mainRelative = rawRelative(main);
-      const parsed = await parseClaudeTranscript(
-        path.join(workspace.rawRoot, ...mainRelative.split("/")),
-        main.sessionCandidate!,
-        main.modifiedAt,
-      );
       const related = before.filter((carrier) => relatedTo(main, carrier));
+      let parsed;
+      try {
+        parsed = await parseClaudeTranscript(
+          path.join(workspace.rawRoot, ...mainRelative.split("/")),
+          main.sessionCandidate!,
+          main.modifiedAt,
+        );
+      } catch (error) {
+        warnings.push(
+          `skipped unreadable Claude Code session ${main.sessionCandidate}: ` +
+          (error instanceof Error ? error.message : "transcript validation failed"),
+        );
+        continue;
+      }
       const fingerprint = claudeSessionFingerprint(main, related);
       const sessionBlockers = blockers(related);
       const validationDetails: string[] = [];
@@ -231,12 +240,13 @@ export async function scanClaude(options: ScanClaudeOptions): Promise<ScanClaude
       rawFiles.forEach((relative) => assigned.add(relative));
       const sessionRef = claudeSessionRef(parsed.nativeId, parsed.firstRootRecordUuid);
       if (seenReferences.has(sessionRef)) {
-        throw new Error(`Claude Code logical session appears in multiple carriers: ${parsed.nativeId}`);
+        warnings.push(`skipped duplicate Claude Code session carrier: ${parsed.nativeId}`);
+        continue;
       }
       seenReferences.add(sessionRef);
       if (sessionBlockers.length !== 0) {
         warnings.push(
-          `Claude Code session ${parsed.nativeId} has native migration blockers: ${sessionBlockers.join(", ")}` +
+          `Claude Code session ${parsed.nativeId} has recoverable native state gaps: ${sessionBlockers.join(", ")}` +
           (validationDetails.length === 0 ? "" : ` (${validationDetails.join("; ")})`),
         );
       }

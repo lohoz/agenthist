@@ -495,25 +495,25 @@ test("OpenCode historical tool evidence is rendered into ordinary Claude history
       "--target", `claude=${targetConfig}`,
       "--map-path", `${SOURCE_OPEN_WORK}=${targetWork}`, "--dry-run",
     ], runtime);
-    assert.equal(allPlan.exitCode, 3, allPlan.stderr);
+    assert.equal(allPlan.exitCode, 0, allPlan.stderr);
     const allEnvelope = JSON.parse(allPlan.stdout) as {
       data?: { status: string; routes: Array<{ quality: string; findings: Array<{ code: string }> }> };
     };
     assert.ok(allEnvelope.data, allPlan.stdout);
     const allData = allEnvelope.data;
-    assert.equal(allData.status, "blocked");
+    assert.equal(allData.status, "ready");
     const allFindingCodes = allData.routes[0]!.findings.map((finding) => finding.code);
     for (const code of [
       "opencode.tool_history.degraded",
       "opencode.reasoning_trace.degraded",
       "opencode.step_lifecycle.skipped",
       "opencode.assistant_abort.materialized",
-      "opencode.tool_history.unprojectable",
-      "opencode.file_history.unprojectable",
-      "opencode.assistant_error.unsupported",
-      "opencode.task_relation.unclosed",
-      "opencode.agent_reference.unsupported",
-      "opencode.subtask.unsupported",
+      "opencode.tool_history.skipped",
+      "opencode.file_history.skipped",
+      "opencode.assistant_error.skipped",
+      "opencode.task_relation.skipped",
+      "opencode.agent_reference.skipped",
+      "opencode.subtask.skipped",
     ]) assert.equal(allFindingCodes.includes(code), true, code);
 
     const importArguments = [

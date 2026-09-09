@@ -114,7 +114,8 @@ function inspectColumns(database: DatabaseSync, table: string): OpenCodeColumn[]
   return columns;
 }
 
-function unknownHistoryRelations(database: DatabaseSync, names: ReadonlySet<string>): string[] {
+export function unclassifiedOpenCodeHistoryRelations(database: DatabaseSync): string[] {
+  const names = tableNames(database);
   const knownHistory = new Set<string>(OPENCODE_HISTORY_TABLES);
   const result: string[] = [];
   for (const table of [...names].sort()) {
@@ -134,10 +135,6 @@ export function inspectOpenCodeHistorySchema(database: DatabaseSync): OpenCodeHi
   const names = tableNames(database);
   for (const table of REQUIRED_TABLES) {
     if (!names.has(table)) throw new Error(`OpenCode database lacks required history capability: ${table}`);
-  }
-  const unknown = unknownHistoryRelations(database, names);
-  if (unknown.length !== 0) {
-    throw new Error(`OpenCode database has unclassified session relations: ${unknown.join(", ")}`);
   }
   const tables: OpenCodeTableSchema[] = [];
   for (const table of OPENCODE_HISTORY_TABLES) {
@@ -534,13 +531,15 @@ export function validateOpenCodeHistoryDatabase(database: DatabaseSync): OpenCod
     if (parentId !== undefined) parents.set(id, parentId);
   }
   for (const [id, parent] of parents) {
-    if (parent === id || !sessionIds.has(parent)) throw new Error(`OpenCode history session parent is invalid: ${id}`);
+    if (parent === id) throw new Error(`OpenCode history session parent is invalid: ${id}`);
+    if (!sessionIds.has(parent)) continue;
     const visited = new Set([id]);
     let current: string | undefined = parent;
     while (current !== undefined) {
       if (visited.has(current)) throw new Error(`OpenCode history session parent cycle includes: ${id}`);
       visited.add(current);
-      current = parents.get(current);
+      const next = parents.get(current);
+      current = next !== undefined && sessionIds.has(next) ? next : undefined;
     }
   }
   const messageIds = new Map<string, string>();
@@ -604,16 +603,9 @@ export function createOpenCodeFilteredDatabase(
   const source = new DatabaseSync(sourcePath, { readOnly: true, readBigInts: true });
   try {
     const schema = validateOpenCodeHistoryDatabase(source);
-    const pendingInputs = openCodePendingInputStatuses(source, schema);
-    const reverts = openCodeRevertStatuses(source, schema);
-    for (const sessionId of selectedSessionIds) {
-      const status = pendingInputs.get(sessionId) ?? "empty";
-      if (status === "present") throw new Error(`OpenCode session has pending input: ${sessionId}`);
-      if (status === "unknown") throw new Error(`OpenCode session input state cannot be classified: ${sessionId}`);
-      const revert = reverts.get(sessionId) ?? "empty";
-      if (revert === "present") throw new Error(`OpenCode session has an active revert: ${sessionId}`);
-      if (revert === "unknown") throw new Error(`OpenCode session revert state cannot be classified: ${sessionId}`);
-    }
+    const archiveSchema: OpenCodeHistorySchema = {
+      tables: schema.tables.filter((table) => table.name !== "session_input"),
+    };
     const sessionTable = openCodeTableSchema(schema, "session")!;
     const messageTable = openCodeTableSchema(schema, "message")!;
     const selectedProjects = new Set<string>();
@@ -654,10 +646,25 @@ export function createOpenCodeFilteredDatabase(
       }
       return false;
     };
-    writeOpenCodeHistoryDatabase(source, destinationPath, schema, include);
-    const destination = new DatabaseSync(destinationPath, { readOnly: true, readBigInts: true });
-    try { validateOpenCodeHistoryDatabase(destination); } finally { destination.close(); }
-    return schema;
+    writeOpenCodeHistoryDatabase(source, destinationPath, archiveSchema, include);
+    const destination = new DatabaseSync(destinationPath, { readBigInts: true });
+    try {
+      if (sessionTable.columns.some((column) => column.name === "revert")) {
+        destination.exec(
+          `UPDATE ${quoteSQLiteIdentifier("session")} SET ${quoteSQLiteIdentifier("revert")} = 'null'`,
+        );
+      }
+      destination.exec(
+        `UPDATE ${quoteSQLiteIdentifier("session")} SET ${quoteSQLiteIdentifier("parent_id")} = NULL ` +
+        `WHERE ${quoteSQLiteIdentifier("parent_id")} IS NOT NULL AND ` +
+        `${quoteSQLiteIdentifier("parent_id")} NOT IN (` +
+        `SELECT ${quoteSQLiteIdentifier("id")} FROM ${quoteSQLiteIdentifier("session")})`,
+      );
+      validateOpenCodeHistoryDatabase(destination);
+    } finally {
+      destination.close();
+    }
+    return archiveSchema;
   } finally {
     source.close();
   }

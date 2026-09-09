@@ -143,35 +143,59 @@ async function prepareItems(options: PrepareImportConversionsOptions): Promise<P
     );
     for (const entry of convertedEntries.toSorted((left, right) => left.sessionRef.localeCompare(right.sessionRef))) {
       const targetAgent = targetFor(options, entry);
-      const portableSource = await materializer.prepare(entry.sessionRef);
-      const source = portableSource.source;
+      const source = materializer.sessions.find((session) => session.sessionRef === entry.sessionRef);
+      if (source === undefined) throw new Error(`archive source session is unavailable: ${entry.sessionRef}`);
       const revision = sourceRevision(source);
       const conversionKey = deriveConversionKey(sourceAgent, targetAgent, entry.sessionRef, revision);
-      const normalization = portableSource.normalization;
-      requireResourceClosure(normalization.session, portableSource.resources, entry.sessionRef);
-      const projection = normalization.session === undefined
-        ? undefined
-        : agentAdapter(targetAgent).portableTarget.project(normalization.session, conversionKey);
-      const findings = normalizeConversionFindings([
-        ...normalization.findings,
-        ...(projection?.findings ?? []),
-      ]);
-      prepared.push({
-        sourceAgent,
-        targetAgent,
-        source,
-        sourceNativeId: entry.nativeId,
-        sourceSessionRef: entry.sessionRef,
-        sourceRevision: revision,
-        conversionKey,
-        targetSessionRef: projection?.sessionRef ?? "",
-        status: conversionStatus(findings),
-        findings,
-        ...(normalization.session === undefined ? {} : { portable: normalization.session }),
-        ...(projection === undefined ? {} : { projection }),
-        resourceObjects: portableSource.resources,
-        resources: portableSource.resources.map(managedResourceReference),
-      });
+      try {
+        const portableSource = await materializer.prepare(entry.sessionRef);
+        const normalization = portableSource.normalization;
+        requireResourceClosure(normalization.session, portableSource.resources, entry.sessionRef);
+        const projection = normalization.session === undefined
+          ? undefined
+          : agentAdapter(targetAgent).portableTarget.project(normalization.session, conversionKey);
+        const findings = normalizeConversionFindings([
+          ...normalization.findings,
+          ...(projection?.findings ?? []),
+        ]);
+        prepared.push({
+          sourceAgent,
+          targetAgent,
+          source: portableSource.source,
+          sourceNativeId: entry.nativeId,
+          sourceSessionRef: entry.sessionRef,
+          sourceRevision: revision,
+          conversionKey,
+          targetSessionRef: projection?.sessionRef ?? "",
+          status: conversionStatus(findings),
+          findings,
+          ...(normalization.session === undefined ? {} : { portable: normalization.session }),
+          ...(projection === undefined ? {} : { projection }),
+          resourceObjects: portableSource.resources,
+          resources: portableSource.resources.map(managedResourceReference),
+        });
+      } catch (error) {
+        if (typeof (error as NodeJS.ErrnoException)?.code === "string") throw error;
+        const findings = normalizeConversionFindings([{
+          code: `${sourceAgent}.portable_source.unavailable`,
+          disposition: "blocked",
+          count: 1,
+        }]);
+        prepared.push({
+          sourceAgent,
+          targetAgent,
+          source,
+          sourceNativeId: entry.nativeId,
+          sourceSessionRef: entry.sessionRef,
+          sourceRevision: revision,
+          conversionKey,
+          targetSessionRef: "",
+          status: "blocked",
+          findings,
+          resourceObjects: [],
+          resources: [],
+        });
+      }
     }
   }
   return prepared;
@@ -365,16 +389,17 @@ export async function prepareImportConversions(
   const prepared = await prepareItems(options);
   const items = publicItems(prepared);
   const counts = statusCounts(prepared);
-  if (counts.blocked !== 0 || prepared.length === 0) {
+  const accepted = prepared.filter((item) => item.status !== "blocked");
+  if (accepted.length === 0) {
     return { statusCounts: counts, items, entries: [], sources: [] };
   }
-  const projected = await writeProjectedEntries(prepared, options.workspace, options.allocateObjectId);
+  const projected = await writeProjectedEntries(accepted, options.workspace, options.allocateObjectId);
   const managed = await prepareManagedResourceObjects(
-    prepared,
+    accepted,
     options.workspace,
     options.allocateObjectId,
   );
-  const entries = completeProjectedEntries(prepared, projected.entries, managed.bindings);
+  const entries = completeProjectedEntries(accepted, projected.entries, managed.bindings);
   const sources = [...projected.sources, ...managed.sources];
   await validateProjectedEntries(entries, sources, options.pathFlavor);
   return { statusCounts: counts, items, entries, sources };

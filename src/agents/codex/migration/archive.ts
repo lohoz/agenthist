@@ -215,11 +215,10 @@ function closureDependencies(
 ): string[] {
   const lineage = readCodexLineage(session);
   const spawn = readCodexSpawn(session);
-  if (spawn.relationStatus !== "valid") throw new Error(`Codex spawn relation closure is invalid: ${session.sessionRef}`);
   return [...new Set([
     ...lineageDependencies(lineage),
     ...(lineage.parentThreadId === null ? [] : [lineage.parentThreadId]),
-    ...spawn.componentNativeIds,
+    ...(spawn.relationStatus === "valid" ? spawn.componentNativeIds : []),
   ])];
 }
 
@@ -294,19 +293,12 @@ function validateCodexRolloutPath(
   ) throw new Error(`Codex rollout carrier is invalid: ${session.sessionRef}`);
   const native = objectValue(session.native);
   const rollout = objectValue(native?.rollout);
-  const thread = objectValue(native?.thread);
   readCodexDynamicTools(session);
   readCodexGoal(session);
   const section = readCodexSection(session);
   const lineage = readCodexLineage(session);
   const spawn = readCodexSpawn(session);
-  if (thread === undefined) throw new Error(`Codex session has no restorable thread row: ${session.sessionRef}`);
-  if (readCodexUnsupportedRelationStatus(session) !== "empty") {
-    throw new Error(`Codex session has unsupported native relations: ${session.sessionRef}`);
-  }
-  if (spawn.relationStatus !== "valid") {
-    throw new Error(`Codex spawn relation closure is invalid: ${session.sessionRef}`);
-  }
+  readCodexUnsupportedRelationStatus(session);
   if (rollout?.relativePath !== relativePath || rollout.archived !== session.nativeArchived) {
     throw new Error(`Codex native descriptor is invalid: ${session.sessionRef}`);
   }
@@ -336,10 +328,14 @@ function validateCodexSelection<T extends CodexMigratableSession>(
         throw new Error(`Codex archive session tree identity is invalid: ${session.sessionRef}`);
       }
     }
-    for (const member of state.spawn.componentNativeIds) {
-      if (!byNativeId.has(member)) throw new Error(`Codex archive spawn component is incomplete: ${session.sessionRef}`);
+    if (state.spawn.relationStatus === "valid") {
+      for (const member of state.spawn.componentNativeIds) {
+        if (!byNativeId.has(member)) throw new Error(`Codex archive spawn component is incomplete: ${session.sessionRef}`);
+      }
     }
-    if (state.spawn.incoming !== null) spawnEdges.set(session.nativeId, state.spawn.incoming);
+    if (state.spawn.relationStatus === "valid" && state.spawn.incoming !== null) {
+      spawnEdges.set(session.nativeId, state.spawn.incoming);
+    }
     if (state.section !== null) {
       const existing = sections.get(state.section.id as string);
       if (
@@ -362,6 +358,7 @@ function validateCodexSelection<T extends CodexMigratableSession>(
     throw new Error(`Codex spawn graph is incomplete: ${byNativeId.get(invalidThreadId)!.sessionRef}`);
   }
   for (const session of sessions) {
+    if (validated.get(session.nativeId)!.spawn.relationStatus !== "valid") continue;
     const expected = graph.components.get(session.nativeId) ?? [session.nativeId];
     if (JSON.stringify(validated.get(session.nativeId)!.spawn.componentNativeIds) !== JSON.stringify(expected)) {
       throw new Error(`Codex archive spawn component is invalid: ${session.sessionRef}`);

@@ -3,10 +3,6 @@ import { forEachClaudeJsonlRecord } from "../jsonl.js";
 
 const MAX_METADATA_BYTES = 1024 * 1024;
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const SUBAGENT_METADATA_FIELDS = new Set([
-  "agentType", "description", "name", "spawnDepth", "toolUseId",
-]);
-
 export type ClaudeSubagentFileRole = "subagent-transcript" | "subagent-metadata";
 
 export interface ClaudeSubagentFile {
@@ -97,7 +93,7 @@ async function subagentMetadata(filePath: string): Promise<{ readonly toolUseId:
   catch { throw new Error("Claude subagent metadata is invalid JSON"); }
   const metadata = objectValue(parsed);
   if (
-    metadata === undefined || Object.keys(metadata).some((field) => !SUBAGENT_METADATA_FIELDS.has(field)) ||
+    metadata === undefined ||
     typeof metadata.agentType !== "string" || metadata.agentType === "" ||
     typeof metadata.description !== "string" ||
     (metadata.name !== undefined && !AGENT_ID.test(typeof metadata.name === "string" ? metadata.name : "")) ||

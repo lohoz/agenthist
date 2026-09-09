@@ -20,32 +20,8 @@ import {
   validateOpenCodeHistoryDatabase,
 } from "../storage/database.js";
 
-const SESSION_INFO_FIELDS = new Set([
-  "id",
-  "slug",
-  "projectID",
-  "workspaceID",
-  "directory",
-  "path",
-  "parentID",
-  "summary",
-  "cost",
-  "tokens",
-  "share",
-  "title",
-  "agent",
-  "model",
-  "version",
-  "metadata",
-  "time",
-  "permission",
-  "revert",
-]);
-const SESSION_EVENT_FIELDS = new Set(["sessionID", "info"]);
-const MOVED_EVENT_FIELDS = new Set(["timestamp", "sessionID", "location", "subdirectory"]);
-const LOCATION_FIELDS = new Set(["directory", "workspaceID"]);
-const SESSION_INFO_EVENT_TYPES = new Set(["session.created.1", "session.updated.1", "session.deleted.1"]);
-const MOVED_EVENT_TYPE = "session.next.moved.1";
+const SESSION_INFO_EVENT_TYPE = /^session\.(?:created|updated|deleted)(?:\.[^.]+)*$/;
+const MOVED_EVENT_TYPE = /^session\.next\.moved(?:\.[^.]+)*$/;
 const LOCATION_EVENT_TYPE = /^(session\.next\.moved|session\.(created|updated|deleted))(?:\.|$)/;
 
 interface SessionLocationProjection {
@@ -77,11 +53,6 @@ function parseObject(value: unknown, label: string): Record<string, unknown> {
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { throw new Error(`${label} is not valid JSON`); }
   return objectValue(parsed, label);
-}
-
-function requireOnlyFields(value: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {
-  const unknown = Object.keys(value).find((field) => !allowed.has(field));
-  if (unknown !== undefined) throw new Error(`${label} has an unsupported field: ${unknown}`);
 }
 
 function optionalString(value: unknown, label: string): string | undefined {
@@ -138,10 +109,8 @@ function projectSessionInfoEvent(
   label: string,
 ): Record<string, unknown> | undefined {
   const data = parseObject(raw, label);
-  requireOnlyFields(data, SESSION_EVENT_FIELDS, label);
   if (data.sessionID !== projection.id) throw new Error(`${label} has a different session ID`);
   const info = objectValue(data.info, `${label} info`);
-  requireOnlyFields(info, SESSION_INFO_FIELDS, `${label} info`);
   if (info.id !== projection.id || typeof info.directory !== "string") {
     throw new Error(`${label} info has an invalid session location`);
   }
@@ -165,12 +134,10 @@ function projectMovedEvent(
   label: string,
 ): Record<string, unknown> | undefined {
   const data = parseObject(raw, label);
-  requireOnlyFields(data, MOVED_EVENT_FIELDS, label);
   if (data.sessionID !== projection.id || typeof data.timestamp !== "number" || !Number.isFinite(data.timestamp)) {
     throw new Error(`${label} has invalid base fields`);
   }
   const location = objectValue(data.location, `${label} location`);
-  requireOnlyFields(location, LOCATION_FIELDS, `${label} location`);
   if (typeof location.directory !== "string") throw new Error(`${label} has an invalid directory`);
   const beforeSubdirectory = optionalString(data.subdirectory, `${label} subdirectory`);
   const beforeWorkspace = optionalString(location.workspaceID, `${label} workspace`);
@@ -196,9 +163,9 @@ function projectEventData(
   label: string,
 ): string | undefined {
   let projected: Record<string, unknown> | undefined;
-  if (type === MOVED_EVENT_TYPE) {
+  if (MOVED_EVENT_TYPE.test(type)) {
     projected = projectMovedEvent(raw, projection, mappings, label);
-  } else if (SESSION_INFO_EVENT_TYPES.has(type)) {
+  } else if (SESSION_INFO_EVENT_TYPE.test(type)) {
     projected = projectSessionInfoEvent(raw, projection, mappings, label);
   } else {
     if (LOCATION_EVENT_TYPE.test(type)) {

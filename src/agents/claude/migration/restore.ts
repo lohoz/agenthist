@@ -20,7 +20,11 @@ import {
 } from "../../../infrastructure/managed-resources.js";
 import { readClaudeDescriptor } from "./archive.js";
 import { discoverClaudeCarriers } from "../carrier.js";
-import { validateClaudeCheckpoints, type ClaudeCheckpointFile } from "../sidecars/checkpoint.js";
+import {
+  validateClaudeCheckpoints,
+  type ClaudeCheckpointClosure,
+  type ClaudeCheckpointFile,
+} from "../sidecars/checkpoint.js";
 import { claudeProjectCarrier } from "../project.js";
 import { projectClaudeTranscript } from "./rewrite.js";
 import { scanClaude } from "../scan.js";
@@ -265,12 +269,17 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
       file.role === "task-entry" || file.role === "task-highwatermark"
         ? [{ relativePath: file.relativePath, role: file.role, filePath: file.filePath }]
         : []);
-    await validateClaudeTaskList({ sessionId: entry.nativeId, files: sourceTasks });
-    const checkpointClosure = await validateClaudeCheckpoints({
-      transcriptPath: mainSource,
-      files: sourceCheckpoints,
-      sessionId: entry.nativeId,
-    });
+    const taskClosureVerified = !descriptor.blockers.includes("claude.native.task_list_unverified");
+    if (taskClosureVerified) await validateClaudeTaskList({ sessionId: entry.nativeId, files: sourceTasks });
+    let checkpointClosure: ClaudeCheckpointClosure = { backups: [], editPaths: [], realParentDirectories: [] };
+    const checkpointClosureVerified = !descriptor.blockers.includes("claude.native.checkpoint_closure_unverified");
+    if (checkpointClosureVerified) {
+      checkpointClosure = await validateClaudeCheckpoints({
+        transcriptPath: mainSource,
+        files: sourceCheckpoints,
+        sessionId: entry.nativeId,
+      });
+    }
     const checkpointParentReplacements = new Map<string, string>();
     for (const sourceParent of checkpointClosure.realParentDirectories) {
       const targetParent = mapAbsolutePath(
@@ -281,15 +290,18 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
       await requireMappedDirectory(targetParent);
       checkpointParentReplacements.set(sourceParent, targetParent);
     }
-    const toolBindings = await validateClaudeToolResults({
-      transcripts: [
-        mainSource,
-        ...sourceSubagents.filter((file) => file.role === "subagent-transcript").map((file) => file.filePath),
-      ],
-      files: sourceToolResults,
-      sessionId: entry.nativeId,
-      projectCarrier: descriptor.projectCarrier,
-    });
+    const toolClosureVerified = !descriptor.blockers.includes("claude.native.tool_result_closure_unverified");
+    const toolBindings = toolClosureVerified
+      ? await validateClaudeToolResults({
+        transcripts: [
+          mainSource,
+          ...sourceSubagents.filter((file) => file.role === "subagent-transcript").map((file) => file.filePath),
+        ],
+        files: sourceToolResults,
+        sessionId: entry.nativeId,
+        projectCarrier: descriptor.projectCarrier,
+      })
+      : [];
     const referenceReplacements = new Map(toolBindings.map((binding) => {
       const located = locatedFiles.find((file) => file.relativePath === binding.file.relativePath);
       if (located === undefined) throw new Error(`Claude Code tool-result destination is missing: ${entry.sessionRef}`);
@@ -356,13 +368,15 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
             filePath: file.filePath,
           }]
         : []);
-    await validateClaudeSubagentBundles({
-      mainTranscriptPath: projectedMain.filePath,
-      sessionId: entry.nativeId,
-      projectCarrier,
-      allowedCwds: allowedTargetCwds,
-      files: projectedSubagents,
-    });
+    if (!descriptor.blockers.includes("claude.native.subagent_bundle_unverified")) {
+      await validateClaudeSubagentBundles({
+        mainTranscriptPath: projectedMain.filePath,
+        sessionId: entry.nativeId,
+        projectCarrier,
+        allowedCwds: allowedTargetCwds,
+        files: projectedSubagents,
+      });
+    }
     const projectedToolResults: ClaudeToolResultFile[] = projectedFiles.flatMap((file) => file.role === "tool-result"
       ? [{
           relativePath: `claude/projects/${projectCarrier}/${entry.nativeId}/tool-results/${path.basename(file.destination)}`,
@@ -370,16 +384,18 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
           filePath: file.filePath,
         }]
       : []);
-    await validateClaudeToolResults({
-      transcripts: [
-        projectedMain.filePath,
-        ...projectedSubagents.filter((file) => file.role === "subagent-transcript").map((file) => file.filePath),
-      ],
-      files: projectedToolResults,
-      sessionId: entry.nativeId,
-      projectCarrier,
-      expectedConfigRoot: target.configRoot,
-    });
+    if (toolClosureVerified) {
+      await validateClaudeToolResults({
+        transcripts: [
+          projectedMain.filePath,
+          ...projectedSubagents.filter((file) => file.role === "subagent-transcript").map((file) => file.filePath),
+        ],
+        files: projectedToolResults,
+        sessionId: entry.nativeId,
+        projectCarrier,
+        expectedConfigRoot: target.configRoot,
+      });
+    }
     const projectedCheckpoints: ClaudeCheckpointFile[] = projectedFiles.flatMap((file) =>
       file.role === "checkpoint-backup"
         ? [{
@@ -389,15 +405,17 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
             mode: file.mode,
           }]
         : []);
-    const projectedCheckpointClosure = await validateClaudeCheckpoints({
-      transcriptPath: projectedMain.filePath,
-      files: projectedCheckpoints,
-      sessionId: entry.nativeId,
-    });
-    const expectedParentDirectories = [...new Set(checkpointParentReplacements.values())].sort();
-    if (projectedCheckpointClosure.realParentDirectories.length !== expectedParentDirectories.length ||
-      projectedCheckpointClosure.realParentDirectories.some((value, index) => value !== expectedParentDirectories[index])) {
-      throw new Error(`Claude Code checkpoint real parent projection is invalid: ${entry.sessionRef}`);
+    if (checkpointClosureVerified) {
+      const projectedCheckpointClosure = await validateClaudeCheckpoints({
+        transcriptPath: projectedMain.filePath,
+        files: projectedCheckpoints,
+        sessionId: entry.nativeId,
+      });
+      const expectedParentDirectories = [...new Set(checkpointParentReplacements.values())].sort();
+      if (projectedCheckpointClosure.realParentDirectories.length !== expectedParentDirectories.length ||
+        projectedCheckpointClosure.realParentDirectories.some((value, index) => value !== expectedParentDirectories[index])) {
+        throw new Error(`Claude Code checkpoint real parent projection is invalid: ${entry.sessionRef}`);
+      }
     }
     const projectedTasks: ClaudeTaskFile[] = projectedFiles.flatMap((file) =>
       file.role === "task-entry" || file.role === "task-highwatermark"
@@ -407,7 +425,7 @@ async function buildRestorePlan(options: RestoreClaudeOptions): Promise<RestoreP
             filePath: file.filePath,
           }]
         : []);
-    await validateClaudeTaskList({ sessionId: entry.nativeId, files: projectedTasks });
+    if (taskClosureVerified) await validateClaudeTaskList({ sessionId: entry.nativeId, files: projectedTasks });
 
     const files: PlannedClaudeFile[] = [];
     for (const file of projectedFiles) {

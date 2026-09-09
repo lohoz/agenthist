@@ -9,6 +9,7 @@ import type { AgentSnapshot, JsonValue, StoredSession } from "../../../domain/hi
 import {
   hasClosedHistoricalToolSequence,
   PORTABLE_CONTEXT_SCHEMA,
+  repairPortableMessages,
   renderPortableContextMessage,
   type PortableContextBlock,
   type PortableContextMessage,
@@ -355,8 +356,6 @@ function buildPortableContext(
   if (build.coalescedMessages !== 0) {
     build.findings.push({ code: "pi.messages.coalesced", disposition: "degraded", count: build.coalescedMessages });
   }
-  if (build.messages.length === 0) build.findings.push(blocked("portable.messages.empty"));
-  if (build.messages[0]?.role !== "user" || build.messages.at(-1)?.role !== "assistant") build.invalidSequence++;
   for (const [index, message] of build.messages.entries()) {
     build.messages[index] = { ...message, ordinal: index };
     try {
@@ -366,14 +365,21 @@ function buildPortableContext(
       build.invalidContent++;
     }
   }
-  if (build.invalidTimestamp !== 0) {
-    build.findings.push(blocked("portable.message_timestamp.invalid", build.invalidTimestamp));
+  const repaired = repairPortableMessages("pi", build.messages, source.createdAt);
+  if (repaired.messages.length === 0 || !repaired.messages.some((message) => message.role === "user")) {
+    build.findings.push(blocked("portable.messages.empty"));
   }
-  if (build.invalidContent !== 0) {
-    build.findings.push(blocked("portable.message_content.invalid", build.invalidContent));
+  const repairedTimestamps = Math.max(build.invalidTimestamp, repaired.repairedTimestamps);
+  const skippedContent = Math.max(build.invalidContent, repaired.skippedBlocks + repaired.skippedMessages);
+  const repairedSequence = Math.max(build.invalidSequence, repaired.coalescedMessages);
+  if (repairedTimestamps !== 0) {
+    build.findings.push({ code: "portable.message_timestamp.repaired", disposition: "degraded", count: repairedTimestamps });
   }
-  if (build.invalidSequence !== 0) {
-    build.findings.push(blocked("portable.message_sequence.unsupported", build.invalidSequence));
+  if (skippedContent !== 0) {
+    build.findings.push({ code: "portable.message_content.skipped", disposition: "skipped", count: skippedContent });
+  }
+  if (repairedSequence !== 0) {
+    build.findings.push({ code: "portable.message_sequence.coalesced", disposition: "degraded", count: repairedSequence });
   }
   build.findings.push({ code: "pi.native_envelope.skipped", disposition: "skipped", count: 1 });
   if (source.provider !== "") {
@@ -394,7 +400,7 @@ function buildPortableContext(
         workingDirectory: source.context,
         defaultModel: source.model,
         title: source.title,
-        messages: build.messages,
+        messages: repaired.messages,
       },
     },
     resources: build.resources,

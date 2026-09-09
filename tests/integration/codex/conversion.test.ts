@@ -1216,14 +1216,14 @@ test("Codex portable context preserves tools and materializes closed replacement
     const targetState = path.join(root, "target-state");
     await mkdir(targetConfig, { recursive: true });
     await mkdir(targetWork, { recursive: true });
-    const blockedPlan = await runCli([
+    const fullPlan = await runCli([
       "--json", "--state-dir", targetState,
       "import", fullArchive, "--agent", "codex", "--to", "claude",
       "--target", `claude=${targetConfig}`,
       "--map-path", `/source/work=${targetWork}`, "--dry-run",
     ], runtime);
-    assert.equal(blockedPlan.exitCode, 3, blockedPlan.stderr);
-    const blockedData = (JSON.parse(blockedPlan.stdout) as {
+    assert.equal(fullPlan.exitCode, 0, fullPlan.stderr);
+    const fullData = (JSON.parse(fullPlan.stdout) as {
       data: {
         status: string;
         blocked: number;
@@ -1231,19 +1231,18 @@ test("Codex portable context preserves tools and materializes closed replacement
         routes: Array<{ quality: string; findings: Array<{ code: string }> }>;
       };
     }).data;
-    assert.equal(blockedData.status, "blocked");
-    assert.equal(blockedData.blocked > 0, true);
-    assert.equal(blockedData.blocked_sessions.length, blockedData.blocked);
-    assert.equal(blockedData.blocked_sessions.every((item) => item.source_session_ref !== ""), true);
-    const blockedFindings = blockedData.routes[0]!.findings.map((finding) => finding.code);
+    assert.equal(fullData.status, "ready");
+    assert.equal(fullData.blocked, 0);
+    assert.deepEqual(fullData.blocked_sessions, []);
+    const fullFindings = fullData.routes[0]!.findings.map((finding) => finding.code);
     for (const code of [
       "codex.tool_history.degraded",
-      "codex.tool_history.unprojectable",
+      "codex.tool_history.skipped",
       "codex.compaction.skipped",
-      "codex.inter_agent_communication.unsupported",
-      "codex.thread_rollback.unsupported",
-      "codex.turn_aborted.unsupported",
-    ]) assert.equal(blockedFindings.includes(code), true, code);
+      "codex.inter_agent_communication.skipped",
+      "codex.thread_rollback.skipped",
+      "codex.turn_aborted.skipped",
+    ]) assert.equal(fullFindings.includes(code), true, code);
 
     const importArguments = [
       "--json", "--state-dir", targetState,

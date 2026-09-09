@@ -19,6 +19,60 @@ export interface ThreadColumn {
   readonly primaryKey: boolean;
 }
 
+export interface SynthesizedThreadRowOptions {
+  readonly id: string;
+  readonly rolloutPath: string;
+  readonly provider: string;
+  readonly cwd: string;
+  readonly title: string;
+  readonly model: string;
+  readonly firstUserMessage: string;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly archived: boolean;
+  readonly cliVersion: string;
+  readonly historyMode: "legacy" | "paginated";
+}
+
+export function synthesizedThreadRow(options: SynthesizedThreadRowOptions): ThreadRow {
+  const createdSeconds = Math.floor(options.createdAt.valueOf() / 1000);
+  const updatedSeconds = Math.floor(options.updatedAt.valueOf() / 1000);
+  return {
+    id: options.id,
+    rollout_path: options.rolloutPath,
+    created_at: createdSeconds,
+    updated_at: updatedSeconds,
+    source: "exec",
+    model_provider: options.provider,
+    cwd: options.cwd,
+    title: options.title,
+    sandbox_policy: '{"type":"read-only"}',
+    approval_mode: "never",
+    tokens_used: 0,
+    has_user_event: 1,
+    archived: options.archived ? 1 : 0,
+    archived_at: null,
+    git_sha: null,
+    git_branch: null,
+    git_origin_url: null,
+    cli_version: options.cliVersion,
+    first_user_message: options.firstUserMessage,
+    agent_nickname: null,
+    agent_role: null,
+    memory_mode: "disabled",
+    model: options.model,
+    reasoning_effort: null,
+    agent_path: null,
+    created_at_ms: options.createdAt.valueOf(),
+    updated_at_ms: options.updatedAt.valueOf(),
+    thread_source: "user",
+    preview: options.firstUserMessage,
+    recency_at: updatedSeconds,
+    recency_at_ms: options.updatedAt.valueOf(),
+    history_mode: options.historyMode,
+  };
+}
+
 const REQUIRED_THREAD_COLUMNS = [
   "id",
   "rollout_path",

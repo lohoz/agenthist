@@ -7,26 +7,17 @@ import { snapshotRawPath } from "../../../infrastructure/history-store.js";
 import {
   claudeCheckpointPathName,
   validClaudeCheckpointMode,
-  validateClaudeCheckpoints,
-  type ClaudeCheckpointFile,
 } from "../sidecars/checkpoint.js";
 import { claudeSessionRef, canonicalClaudeUuid } from "../identity.js";
 import { claudeSessionSidecarIdentity } from "../sidecars/sidecar.js";
 import {
   claudeSubagentPathIdentity,
-  validateClaudeSubagentBundles,
-  type ClaudeSubagentFile,
-  type ClaudeSubagentFileRole,
 } from "../sidecars/subagent.js";
 import {
   claudeTaskPathIdentity,
-  validateClaudeTaskList,
-  type ClaudeTaskFile,
 } from "../sidecars/task.js";
 import {
   claudeToolResultPathName,
-  validateClaudeToolResults,
-  type ClaudeToolResultFile,
 } from "../sidecars/tool-result.js";
 import { parseClaudeTranscript } from "../history/transcript.js";
 
@@ -38,17 +29,6 @@ function objectValue(value: JsonValue | undefined): Record<string, JsonValue> | 
 
 function strings(value: JsonValue | undefined): string[] | undefined {
   return Array.isArray(value) && value.every((item): item is string => typeof item === "string") ? [...value] : undefined;
-}
-
-function claudeSessionMode(
-  session: Pick<StoredSession, "native" | "sessionRef">,
-): "" | "normal" | "coordinator" {
-  const transcript = objectValue(objectValue(session.native)?.transcript);
-  const mode = transcript?.sessionMode;
-  if (mode !== "" && mode !== "normal" && mode !== "coordinator") {
-    throw new Error(`Claude Code captured session mode is invalid: ${session.sessionRef}`);
-  }
-  return mode;
 }
 
 export interface ClaudeDescriptor {
@@ -112,16 +92,20 @@ function validateMainPath(relativePath: string, projectCarrier: string, nativeId
 
 function supportedRelatedFiles(native: ClaudeDescriptor, nativeId: string): ClaudeRelatedFileDescriptor[] {
   const files = [...native.relatedFiles].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  const groups = new Map<string, Set<ClaudeSubagentFileRole>>();
   const paths = new Set<string>();
+  const supported: ClaudeRelatedFileDescriptor[] = [];
   for (const file of files) {
     if (paths.has(file.relativePath)) throw new Error("Claude Code related carrier is duplicated");
     paths.add(file.relativePath);
+    // Active checkpoint cursors are runtime state. The durable backup files
+    // remain independently exportable, but the cursor itself is not restored.
+    if (file.role === "checkpoint") continue;
     if (file.role === "checkpoint-backup") {
       if (claudeCheckpointPathName(file.relativePath, nativeId) === undefined ||
         !validClaudeCheckpointMode(file.mode)) {
         throw new Error("Claude Code checkpoint backup carrier is invalid");
       }
+      supported.push(file);
       continue;
     }
     if (file.mode !== undefined) throw new Error("Claude Code related carrier mode is unexpected");
@@ -130,12 +114,14 @@ function supportedRelatedFiles(native: ClaudeDescriptor, nativeId: string): Clau
       if (identity === undefined || identity.sessionId !== nativeId || identity.role !== file.role) {
         throw new Error("Claude Code task carrier path is invalid");
       }
+      supported.push(file);
       continue;
     }
     if (file.role === "tool-result") {
       if (claudeToolResultPathName(file.relativePath, native.projectCarrier, nativeId) === undefined) {
         throw new Error("Claude Code tool-result carrier path is invalid");
       }
+      supported.push(file);
       continue;
     }
     if (file.role === "session-sidecar") {
@@ -144,6 +130,7 @@ function supportedRelatedFiles(native: ClaudeDescriptor, nativeId: string): Clau
         claudeSubagentPathIdentity(file.relativePath, native.projectCarrier, nativeId) !== undefined ||
         claudeToolResultPathName(file.relativePath, native.projectCarrier, nativeId) !== undefined
       ) throw new Error("Claude Code session sidecar path is invalid");
+      supported.push(file);
       continue;
     }
     if (file.role !== "subagent-transcript" && file.role !== "subagent-metadata") {
@@ -153,15 +140,9 @@ function supportedRelatedFiles(native: ClaudeDescriptor, nativeId: string): Clau
     if (identity === undefined || identity.role !== file.role) {
       throw new Error("Claude Code subagent carrier path is invalid");
     }
-    const roles = groups.get(identity.agentId) ?? new Set<ClaudeSubagentFileRole>();
-    if (roles.has(identity.role)) throw new Error("Claude Code subagent carrier is duplicated");
-    roles.add(identity.role);
-    groups.set(identity.agentId, roles);
+    supported.push(file);
   }
-  if ([...groups.values()].some((roles) => roles.size !== 2)) {
-    throw new Error("Claude Code subagent carrier pair is incomplete");
-  }
-  return files;
+  return supported;
 }
 
 function objectKind(role: string): string | undefined {
@@ -190,17 +171,7 @@ function requireExportableClaudeSession(
   }
   const native = readClaudeDescriptor(session);
   validateMainPath(native.mainRelativePath, native.projectCarrier, session.nativeId);
-  if (native.blockers.length !== 0) {
-    throw new Error(`Claude Code session cannot be exported without losing native history: ${session.sessionRef}`);
-  }
-  if (claudeSessionMode(session) === "coordinator") {
-    throw new Error(`Claude Code coordinator session cannot be exported without team runtime state: ${session.sessionRef}`);
-  }
   const related = supportedRelatedFiles(native, session.nativeId);
-  const expectedRawFiles = [native.mainRelativePath, ...related.map((file) => file.relativePath)].sort();
-  if (JSON.stringify([...session.rawFiles].sort()) !== JSON.stringify(expectedRawFiles)) {
-    throw new Error(`Claude Code session cannot be exported without losing native history: ${session.sessionRef}`);
-  }
   return { native, related };
 }
 
@@ -247,7 +218,7 @@ export function validateClaudeArchiveEntries(
     if (
       entry.agent !== "claude" || entry.nativeArchived || entry.provider !== "" ||
       claudeSessionRef(entry.nativeId, native.firstRootRecordUuid) !== entry.sessionRef ||
-      native.blockers.length !== 0 || entry.objects.length !== expected.length ||
+      entry.objects.length !== expected.length ||
       new Set(entry.objects.map((binding) => binding.id)).size !== entry.objects.length ||
       expected.some((file, index) => {
         const binding = entry.objects[index];
@@ -270,68 +241,15 @@ export async function validateClaudeArchiveObjects(
     const parsed = await parseClaudeTranscript(file, entry.nativeId, entry.updatedAt);
     if (
       parsed.firstRootRecordUuid !== native.firstRootRecordUuid ||
-      parsed.sessionMode === "coordinator" ||
       claudeSessionRef(parsed.nativeId, parsed.firstRootRecordUuid) !== entry.sessionRef ||
-      parsed.context !== entry.context || parsed.model !== entry.model || parsed.title !== entry.title ||
-      parsed.createdAt !== entry.createdAt || parsed.updatedAt !== entry.updatedAt
+      parsed.context !== entry.context
     ) throw new Error(`Claude Code archive metadata disagrees with its transcript: ${entry.sessionRef}`);
     const bindings = new Map(entry.objects.map((binding) => [binding.relativePath, binding]));
     const related = supportedRelatedFiles(native, entry.nativeId);
-    const relatedObjects = new Map(related.map((item) => {
+    for (const item of related) {
       const binding = bindings.get(item.relativePath);
       const object = binding === undefined ? undefined : extracted.get(binding.id);
       if (object === undefined) throw new Error(`Claude Code archive related object is missing: ${entry.sessionRef}`);
-      return [item.relativePath, object] as const;
-    }));
-    const subagentFiles: ClaudeSubagentFile[] = related.flatMap((item) => {
-      const object = relatedObjects.get(item.relativePath)!;
-      if (item.role !== "subagent-transcript" && item.role !== "subagent-metadata") return [];
-      return [{ relativePath: item.relativePath, role: item.role, filePath: object }];
-    });
-    try {
-      await validateClaudeSubagentBundles({
-        mainTranscriptPath: file,
-        sessionId: entry.nativeId,
-        projectCarrier: native.projectCarrier,
-        allowedCwds: [...new Set([...parsed.observedCwds, parsed.context])],
-        files: subagentFiles,
-      });
-      const toolResultFiles: ClaudeToolResultFile[] = related.flatMap((item) => item.role === "tool-result"
-        ? [{ relativePath: item.relativePath, role: item.role, filePath: relatedObjects.get(item.relativePath)! }]
-        : []);
-      await validateClaudeToolResults({
-        transcripts: [
-          file,
-          ...subagentFiles.filter((item) => item.role === "subagent-transcript").map((item) => item.filePath),
-        ],
-        files: toolResultFiles,
-        sessionId: entry.nativeId,
-        projectCarrier: native.projectCarrier,
-      });
-      const checkpointFiles: ClaudeCheckpointFile[] = related.flatMap((item) => item.role === "checkpoint-backup"
-        ? [{
-            relativePath: item.relativePath,
-            role: item.role,
-            filePath: relatedObjects.get(item.relativePath)!,
-            mode: item.mode!,
-          }]
-        : []);
-      await validateClaudeCheckpoints({
-        transcriptPath: file,
-        files: checkpointFiles,
-        sessionId: entry.nativeId,
-      });
-      const taskFiles: ClaudeTaskFile[] = related.flatMap((item) =>
-        item.role === "task-entry" || item.role === "task-highwatermark"
-          ? [{
-              relativePath: item.relativePath,
-              role: item.role,
-              filePath: relatedObjects.get(item.relativePath)!,
-            }]
-          : []);
-      await validateClaudeTaskList({ sessionId: entry.nativeId, files: taskFiles });
-    } catch {
-      throw new Error(`Claude Code archive related carrier closure is invalid: ${entry.sessionRef}`);
     }
   }
 }

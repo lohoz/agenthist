@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import type { AgentSnapshot, StoredSession } from "../../domain/history.js";
 import { copyStableFile } from "../../infrastructure/files.js";
@@ -17,7 +18,10 @@ import {
   reusableSessionMap,
   scanState,
 } from "../incremental-scan.js";
-import { createOpenCodeHistoryDatabase } from "./storage/database.js";
+import {
+  createOpenCodeHistoryDatabase,
+  unclassifiedOpenCodeHistoryRelations,
+} from "./storage/database.js";
 import { discoverOpenCodePlans, sameOpenCodePlans } from "./plan.js";
 import { OPENCODE_HISTORY_DATABASE_RELATIVE_PATH, readOpenCodeHistory } from "./history/reader.js";
 import { requireOpenCodeSource, resolveOpenCodeSource, type OpenCodeSourceOptions } from "./source.js";
@@ -103,7 +107,19 @@ async function captureOpenCode(
   const acquisition = path.join(workspace.root, ".acquisition.sqlite");
   const historyDatabase = path.join(workspace.rawRoot, ...OPENCODE_HISTORY_DATABASE_RELATIVE_PATH.split("/"));
   await backupSQLiteDatabase(source.databasePath, acquisition);
+  const capabilityWarnings: string[] = [];
   try {
+    const database = new DatabaseSync(acquisition, { readOnly: true, readBigInts: true });
+    try {
+      const unclassified = unclassifiedOpenCodeHistoryRelations(database);
+      if (unclassified.length !== 0) {
+        capabilityWarnings.push(
+          `ignored unclassified OpenCode session relation table(s): ${unclassified.join(", ")}`,
+        );
+      }
+    } finally {
+      database.close();
+    }
     await mkdir(path.dirname(historyDatabase), { recursive: true, mode: 0o700 });
     createOpenCodeHistoryDatabase(acquisition, historyDatabase);
   } finally {
@@ -143,7 +159,12 @@ async function captureOpenCode(
     nonReusableSessions: new Set(toolOutputs.bySession.keys()),
     ...(options.importedLibrary === undefined ? {} : { importedLibrary: options.importedLibrary }),
   });
-  const warnings = [...read.warnings, ...toolOutputs.warnings, ...toolOutputResources.warnings];
+  const warnings = [
+    ...capabilityWarnings,
+    ...read.warnings,
+    ...toolOutputs.warnings,
+    ...toolOutputResources.warnings,
+  ];
   if (read.unassignedSidecars.length !== 0) warnings.push(
     `preserved ${read.unassignedSidecars.length} OpenCode session_diff file(s) without a matching session; excluded them from session migration`,
   );

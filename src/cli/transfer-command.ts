@@ -119,6 +119,9 @@ function renderImportHuman(file: string, result: ImportHistoryResult, color: boo
     (session) => `  ${colorizeHuman(session.sourceSessionRef, "strong", color)}\n` +
       `    ${colorizeHuman(agentLabel(session.sourceAgent), "info", color)} -> ` +
       `${colorizeHuman(agentLabel(session.targetAgent), "info", color)}\n` +
+      (session.reason === undefined
+        ? ""
+        : `    ${colorizeHuman(session.reason, "error", color)}\n`) +
       renderHumanLossFindings(session.findings, color),
     "blocked session",
   );
@@ -764,6 +767,7 @@ export async function runImport(
       target_agent: session.targetAgent,
       source_session_ref: session.sourceSessionRef,
       findings: session.findings,
+      ...(session.reason === undefined ? {} : { reason: session.reason }),
     })),
     routes: result.routes.map((route) => ({
       source_agent: route.sourceAgent,

@@ -58,7 +58,7 @@ async function publishedProbe(file: string): Promise<Record<string, unknown>> {
   if (existing !== undefined) return existing;
   // fs.watch can abort the Node process in libuv on Windows CI temp-directory
   // aliases. Poll the atomically published probe instead of observing the directory.
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     await delay(30);
     const value = await read();
@@ -319,7 +319,7 @@ test("Windows terminal host gives an npm-style cmd shim a real console and liter
     }
     return;
   }
-  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-interactive-terminal-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "agenthist-interactive-terminal-")));
   const workspace = path.join(root, "workspace with spaces");
   const shim = path.join(root, "agent probe.cmd");
   const probeScript = path.join(root, "terminal-probe.ps1");

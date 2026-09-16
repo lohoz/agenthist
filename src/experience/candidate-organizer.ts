@@ -108,6 +108,7 @@ export interface ConsolidateExperiencesOptions {
   readonly requestInputTokens: number;
   readonly fetcher?: typeof fetch;
   readonly processRunner?: AnalysisProcessRunner;
+  readonly onProgress?: (currentRequest: number, totalRequests: number) => void;
 }
 
 interface ConsolidationRequestSuccess {
@@ -418,6 +419,7 @@ export async function consolidateExperiences(
   let usage = EMPTY_USAGE;
   let completedRequests = 0;
   for (const request of selected) {
+    options.onProgress?.(completedRequests + 1, selected.length);
     try {
       const completed = await requestConsolidation(
         options.profile,

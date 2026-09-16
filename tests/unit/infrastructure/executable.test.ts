@@ -56,4 +56,19 @@ test("Windows executable candidates honor current directory, Path, and PATHEXT",
     "D:\\npm\\codex.EXE",
     "D:\\npm\\codex.CMD",
   ]);
+
+  assert.deepEqual(executableCandidates("codex", {
+    cwd: "C:\\untrusted-workspace",
+    environment: {
+      Path: "C:\\tools;D:\\npm",
+      PATHEXT: ".EXE;.CMD",
+    },
+    platform: "win32",
+    searchCurrentDirectory: false,
+  }), [
+    "C:\\tools\\codex.EXE",
+    "C:\\tools\\codex.CMD",
+    "D:\\npm\\codex.EXE",
+    "D:\\npm\\codex.CMD",
+  ]);
 });

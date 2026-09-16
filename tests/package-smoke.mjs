@@ -70,10 +70,10 @@ try {
     archive,
   ]);
 
-  const version = await npm(["exec", "--offline", "--prefix", installed, "--", "agenthist", "version"]);
+  const version = await npm(["exec", "--offline", "--prefix", installed, "--", "agenthist", "version"], installed);
   assert.equal(version.stdout.trim(), metadata.version);
 
-  const help = await npm(["exec", "--offline", "--prefix", installed, "--", "agenthist", "--help"]);
+  const help = await npm(["exec", "--offline", "--prefix", installed, "--", "agenthist", "--help"], installed);
   assert.match(help.stdout, /AgentHist manages, migrates, and extracts recurring experience from local Agent history\./);
   assert.match(help.stdout, /Usage:\s+agenthist/);
 

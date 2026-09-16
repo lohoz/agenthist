@@ -20,6 +20,7 @@ import { withStateWriteLock } from "../infrastructure/state.js";
 import { assertNoPendingTransactions } from "../infrastructure/transaction-store.js";
 
 export interface ExperienceDryRunOptions {
+  readonly modelContextWindow?: number;
   readonly stateDirectory: string;
   readonly cwd?: string;
   readonly agents?: readonly Agent[];
@@ -78,6 +79,13 @@ export interface ExperienceIndexSummary {
 }
 
 export interface ExperienceDryRunResult {
+  readonly singleRequest?: true;
+  readonly inputPreparation?: {
+    readonly originalTokens: number;
+    readonly contextWindow?: number;
+    readonly budgetSource: "agent" | "default" | "explicit";
+    readonly compression: "text_dictionary" | "none";
+  };
   readonly dryRun: true;
   readonly selection: ExperienceHistorySelection;
   readonly corpus: ExperienceCorpusProfile;

@@ -3,6 +3,7 @@ import {
   requestAnalysis,
   resolveAnalysisConfiguration,
   type AnalysisProfile,
+  type AnalysisConfiguration,
   type AnalysisBackend,
   type AnalysisProcessRunner,
   type AnalysisUsage,
@@ -10,6 +11,7 @@ import {
 import { OperationError } from "./operation-error.js";
 
 export interface ExperienceModelCheckOptions {
+  readonly analysisConfiguration?: AnalysisConfiguration;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly fetcher?: typeof fetch;
@@ -120,7 +122,7 @@ export async function checkExperienceModels(
   options: ExperienceModelCheckOptions,
 ): Promise<ExperienceModelCheckResult> {
   try {
-    const configuration = await resolveAnalysisConfiguration({
+    const configuration = options.analysisConfiguration ?? await resolveAnalysisConfiguration({
       cwd: options.cwd,
       environment: options.environment,
       createTemplate: true,
@@ -129,9 +131,8 @@ export async function checkExperienceModels(
     const fastUsage = await checkProfile(configuration.fast, options.fetcher, options.processRunner);
     const sameEffectiveProfile =
       configuration.deep.profileFingerprint === configuration.fast.profileFingerprint &&
-      (configuration.fast.backend !== "openai-compatible-chat" ||
-        (configuration.deep.backend === "openai-compatible-chat" &&
-          configuration.deep.apiKey === configuration.fast.apiKey));
+      ("command" in configuration.fast ||
+        (!("command" in configuration.deep) && configuration.deep.apiKey === configuration.fast.apiKey));
     const deepUsage = sameEffectiveProfile
       ? fastUsage
       : await checkProfile(configuration.deep, options.fetcher, options.processRunner);

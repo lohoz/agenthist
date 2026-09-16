@@ -23,16 +23,27 @@ import { requireClaudeSource, resolveClaudeSource, type ClaudeSourceOptions } fr
 import { validateClaudeSubagentBundles, type ClaudeSubagentFile } from "./sidecars/subagent.js";
 import { validateClaudeTaskList, type ClaudeTaskFile } from "./sidecars/task.js";
 import { validateClaudeToolResults, type ClaudeToolResultFile } from "./sidecars/tool-result.js";
-import { parseClaudeTranscript } from "./history/transcript.js";
+import {
+  parseClaudeTranscript,
+  UnsupportedClaudeTranscriptError,
+} from "./history/transcript.js";
 
 export interface ScanClaudeOptions extends ClaudeSourceOptions {
   readonly stateDirectory: string;
   readonly importedLibrary?: ReadonlyMap<string, StoredSession["library"]>;
+  readonly isolateInvalidSessions?: boolean;
+  readonly requiredNativeIds?: readonly string[];
 }
 
 export interface ScanClaudeResult {
   readonly stateDirectory: string;
   readonly snapshot: AgentSnapshot;
+}
+
+export function isClaudeTranscriptIsolationError(
+  error: unknown,
+): error is UnsupportedClaudeTranscriptError {
+  return error instanceof UnsupportedClaudeTranscriptError;
 }
 
 function rawRelative(carrier: ClaudeCarrier): string {
@@ -84,6 +95,11 @@ export async function scanClaude(options: ScanClaudeOptions): Promise<ScanClaude
   const sourceKey = incrementalSourceKey("claude", [source.configRoot]);
   const previousByNativeId = reusableNativeSessionMap(previous, sourceKey);
   const previousLibrary = new Map(previous?.sessions.map((session) => [session.sessionRef, session.library]));
+  const requiredNativeIds = new Set(options.requiredNativeIds ?? []);
+  if (requiredNativeIds.size !== (options.requiredNativeIds?.length ?? 0) ||
+    [...requiredNativeIds].some((nativeId) => typeof nativeId !== "string" || nativeId === "")) {
+    throw new Error("Claude Code required scan identities are invalid");
+  }
   const reusable = new Map<string, ReusableClaudeSession>();
   const reusableFiles = new Set<string>();
   for (const main of mains) {
@@ -146,9 +162,14 @@ export async function scanClaude(options: ScanClaudeOptions): Promise<ScanClaude
           main.modifiedAt,
         );
       } catch (error) {
+        if (
+          !options.isolateInvalidSessions || requiredNativeIds.has(main.sessionCandidate!) ||
+          !isClaudeTranscriptIsolationError(error)
+        ) throw error;
         warnings.push(
           `skipped unreadable Claude Code session ${main.sessionCandidate}: ` +
-          (error instanceof Error ? error.message : "transcript validation failed"),
+          (error instanceof Error ? error.message : "transcript validation failed") +
+          "; native files were preserved",
         );
         continue;
       }
@@ -286,6 +307,11 @@ export async function scanClaude(options: ScanClaudeOptions): Promise<ScanClaude
       });
     }
     sessions.sort((left, right) => left.sessionRef.localeCompare(right.sessionRef));
+    const missingRequired = [...requiredNativeIds].filter((nativeId) =>
+      !sessions.some((session) => session.nativeId === nativeId));
+    if (missingRequired.length !== 0) {
+      throw new Error("Claude Code scan omitted a required transaction session");
+    }
     const auxiliaryFiles = before.map(rawRelative).filter((relative) => !assigned.has(relative)).sort();
     if (auxiliaryFiles.length !== 0) {
       warnings.push(`captured ${auxiliaryFiles.length} unassigned Claude Code history carrier(s)`);

@@ -51,6 +51,7 @@ export interface ImportHistoryOptions {
   readonly sessions?: readonly string[];
   readonly agents?: readonly Agent[];
   readonly targetAgent?: Agent;
+  readonly allowLossyConversion?: boolean;
   readonly sessionTargets?: Readonly<Record<string, Agent>>;
   readonly mode: "dry_run" | "apply";
   readonly environment?: NodeJS.ProcessEnv;
@@ -565,6 +566,7 @@ async function prepareImportPlan(
     destinations,
     workspace,
     pathFlavor: sourcePathFlavor,
+    ...(options.allowLossyConversion === undefined ? {} : { allowLossy: options.allowLossyConversion }),
     allocateObjectId: () => {
       objectNumber++;
       if (objectNumber > 999_999) throw new Error("import plan exceeds the object identity limit");
@@ -725,6 +727,9 @@ export async function importHistoryArchive(options: ImportHistoryOptions): Promi
       ...(options.providerPolicy === undefined ? {} : { providerPolicy: options.providerPolicy }),
       ...(options.pathMappings === undefined ? {} : { pathMappings: options.pathMappings }),
       ...(options.targetAgent === undefined ? {} : { targetAgent: options.targetAgent }),
+      ...(options.allowLossyConversion === undefined
+        ? {}
+        : { allowLossyConversion: options.allowLossyConversion }),
       ...(options.sessionTargets === undefined ? {} : { sessionTargets: options.sessionTargets }),
       mode: options.mode,
       ...(options.environment === undefined ? {} : { environment: options.environment }),

@@ -4,7 +4,7 @@
 
 AgentHist manages, searches, exports, imports, migrates, and converts history from supported local coding Agents. It also extracts recurring experience and installs the AgentHist usage skill.
 
-History metadata such as Codex provider bindings may be rewritten. Connection settings and credentials, including base URLs, API keys, tokens, and OAuth data, are outside the product scope.
+History metadata such as Codex provider bindings may be rewritten. Desktop Experience may read the selected Agent's existing API endpoint, model, and API credentials to call that endpoint directly. Keep credentials in memory; never change native connection settings or copy credentials into AgentHist settings, logs, renderer DTOs, or reports.
 
 ## Structure
 

@@ -106,6 +106,8 @@ test("Codex CLI model check isolates execution and passes distinct fast/deep mod
     });
     assert.equal(result.exitCode, 0, result.stderr);
     assert.deepEqual(calls.map((call) => call.model), ["gpt-5.6-terra", "gpt-5.6-sol"]);
+    assert.equal(calls[0]!.args.includes('model_reasoning_effort="low"'), true);
+    assert.equal(calls[1]!.args.includes('model_reasoning_effort="medium"'), true);
     const data = (JSON.parse(result.stdout) as {
       readonly data: {
         readonly requests: number;

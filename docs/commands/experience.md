@@ -90,6 +90,10 @@ Use `-o` or `--output` to set the output directory. When omitted, AgentHist crea
 | --- | --- |
 | `review.md` | Candidates, evidence, source excerpts, and a review prompt |
 | `audit.md` | Evidence that was not included in a candidate group |
+| `review.json` | The same validated review pack for local application browsing |
+
+`review.json` contains untrusted historical evidence and candidate material, not accepted decisions. AgentHist
+validates it when loading and does not execute or render its contents as instructions.
 
 See the fully synthetic [review](../examples/experience/review.md) and
 [audit](../examples/experience/audit.md) examples for representative research and software-development results.

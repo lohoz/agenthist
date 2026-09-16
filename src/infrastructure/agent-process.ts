@@ -22,6 +22,7 @@ export const ensureAgentProcessAvailable: AgentProcessAvailabilityChecker = asyn
   const executable = await resolveExecutable(spec.command, {
     cwd: spec.cwd,
     environment: environment ?? process.env,
+    searchCurrentDirectory: false,
   });
   if (executable === undefined) {
     throw new Error(`${spec.command} is not installed or is not available on PATH`);
@@ -29,8 +30,16 @@ export const ensureAgentProcessAvailable: AgentProcessAvailabilityChecker = asyn
 };
 
 export const runAgentProcess: AgentProcessRunner = async (spec, environment) => {
+  const executable = await resolveExecutable(spec.command, {
+    cwd: spec.cwd,
+    environment: environment ?? process.env,
+    searchCurrentDirectory: false,
+  });
+  if (executable === undefined) {
+    throw new Error(`${spec.command} is not installed or is not available on PATH`);
+  }
   return await new Promise<AgentProcessResult>((resolve, reject) => {
-    const child = spawn(spec.command, [...spec.args], {
+    const child = spawn(executable, [...spec.args], {
       cwd: spec.cwd,
       env: environment ?? process.env,
       stdio: "inherit",

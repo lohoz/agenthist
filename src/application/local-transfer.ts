@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { Agent } from "../domain/agent.js";
+import type { ArchiveEntry } from "../domain/archive.js";
 import type { ConversionFinding, ConversionStatus } from "../domain/conversion.js";
 import { sessionAgent } from "../domain/history.js";
 import { pathFlavorForPlatform } from "../domain/host-path.js";
@@ -17,6 +18,7 @@ export interface TransferHistorySessionOptions {
   readonly sessionRef: string;
   readonly targetAgent: Agent;
   readonly mode: "dry_run" | "apply";
+  readonly allowLossyConversion?: boolean;
   readonly codexHome?: string;
   readonly sqliteHome?: string;
   readonly profile?: string;
@@ -41,6 +43,17 @@ export interface ExistingHistoryTransfer {
 }
 
 export type FindExistingHistoryTransferOptions = Omit<TransferHistorySessionOptions, "mode">;
+
+function transferEntries(
+  entries: readonly ArchiveEntry[],
+  sessionRef: string,
+  allowLossyConversion: boolean | undefined,
+): readonly ArchiveEntry[] {
+  if (!allowLossyConversion) return entries;
+  const selected = entries.filter((entry) => entry.sessionRef === sessionRef);
+  if (selected.length !== 1) throw new Error("lossy local transfer could not isolate the selected conversation");
+  return selected;
+}
 
 function objectIdAllocator(existing: ReadonlySet<string>): () => string {
   let next = 0;
@@ -69,17 +82,19 @@ export async function findExistingHistoryTransfer(
     strictSessions: true,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   }, async (source) => {
+    const entries = transferEntries(source.entries, options.sessionRef, options.allowLossyConversion);
     const objects = new Map(source.sources.map((object) => [object.id, object.filePath]));
     if (objects.size !== source.sources.length) throw new Error("prepared history source has duplicate objects");
     const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-local-transfer-plan-"));
     try {
-      const destinations = new Map(source.entries.map((entry) => [entry.sessionRef, options.targetAgent]));
+      const destinations = new Map(entries.map((entry) => [entry.sessionRef, options.targetAgent]));
       const conversions = await prepareImportConversions({
-        entries: source.entries,
+        entries,
         objects,
         destinations,
         workspace,
         pathFlavor: pathFlavorForPlatform(),
+        ...(options.allowLossyConversion === undefined ? {} : { allowLossy: options.allowLossyConversion }),
         allocateObjectId: objectIdAllocator(new Set(objects.keys())),
       });
       const planned = conversions.items.find((item) => item.sourceSessionRef === options.sessionRef);
@@ -109,12 +124,14 @@ export async function transferHistorySession(
     strictSessions: true,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   }, async (source) => {
+    const entries = transferEntries(source.entries, options.sessionRef, options.allowLossyConversion);
     const objects = new Map(source.sources.map((object) => [object.id, object.filePath]));
     if (objects.size !== source.sources.length) throw new Error("prepared history source has duplicate objects");
     return importPreparedHistory({
       stateDirectory: options.stateDirectory,
       targetAgent: options.targetAgent,
       mode: options.mode,
+      ...(options.allowLossyConversion === undefined ? {} : { allowLossyConversion: options.allowLossyConversion }),
       ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
       ...(options.sqliteHome === undefined ? {} : { sqliteHome: options.sqliteHome }),
       ...(options.profile === undefined ? {} : { profile: options.profile }),
@@ -128,7 +145,7 @@ export async function transferHistorySession(
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.home === undefined ? {} : { home: options.home }),
     }, {
-      entries: source.entries,
+      entries,
       objects,
       pathFlavor: pathFlavorForPlatform(),
     });

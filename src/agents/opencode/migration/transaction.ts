@@ -19,7 +19,12 @@ import {
   type ExclusiveFileImage,
 } from "../../../infrastructure/exclusive-file.js";
 import { digestFile } from "../../../infrastructure/files.js";
-import { loadHistoryHead, loadSnapshot, restoreHistoryHead } from "../../../infrastructure/history-store.js";
+import {
+  historyHeadMatchesSnapshot,
+  loadHistoryHead,
+  loadSnapshot,
+  restoreHistoryHead,
+} from "../../../infrastructure/history-store.js";
 import {
   observeManagedResourceEffects,
   prepareManagedResourceTransactionEffects,
@@ -690,7 +695,7 @@ export async function previewOpenCodeRollback(
   return {
     transactionRef: transactionReference(journal.id), operation: "history_import", state: journal.state,
     direction: "rollback", ready: allNativeAt(observed, "after") && rowsUnchanged(observed, payload) &&
-      await loadHistoryHead(stateDirectory, "opencode") === payload.historyHeadAfter,
+      await historyHeadMatchesSnapshot(stateDirectory, "opencode", payload.historyHeadAfter),
     items: payload.sessions.length, findings: observed.findings,
   };
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { link, lstat, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { Agent } from "../domain/agent.js";
 import {
@@ -127,9 +128,11 @@ async function pruneHistorySnapshots(stateDirectory: string, agent: Agent): Prom
   }
 }
 
-export async function loadSnapshot(stateDirectory: string, agent: Agent): Promise<AgentSnapshot | undefined> {
-  const snapshotId = await loadHistoryHead(stateDirectory, agent);
-  if (snapshotId === null) return undefined;
+async function loadStoredSnapshot(
+  stateDirectory: string,
+  agent: Agent,
+  snapshotId: string,
+): Promise<AgentSnapshot> {
   const bytes = await readFile(path.join(agentRoot(stateDirectory, agent), "snapshots", snapshotId, "index.json"));
   const snapshot = JSON.parse(bytes.toString("utf8")) as AgentSnapshot;
   if (
@@ -140,6 +143,20 @@ export async function loadSnapshot(stateDirectory: string, agent: Agent): Promis
   ) {
     throw new Error("invalid history snapshot");
   }
+  for (const session of snapshot.sessions) {
+    if (
+      readLibraryMetadata(session.library) === undefined || session.agent !== agent ||
+      !Array.isArray(session.searchText) ||
+      session.searchText.some((value: unknown) => typeof value !== "string")
+    ) throw new Error("invalid history snapshot");
+  }
+  return snapshot;
+}
+
+export async function loadSnapshot(stateDirectory: string, agent: Agent): Promise<AgentSnapshot | undefined> {
+  const snapshotId = await loadHistoryHead(stateDirectory, agent);
+  if (snapshotId === null) return undefined;
+  const snapshot = await loadStoredSnapshot(stateDirectory, agent, snapshotId);
   const overlay = await loadLibraryOverlay(stateDirectory);
   const library = new Map<string, LibraryMetadata>();
   for (const entry of overlay.entries) {
@@ -152,13 +169,41 @@ export async function loadSnapshot(stateDirectory: string, agent: Agent): Promis
   }
   const sessions = snapshot.sessions.map((session) => {
     const captured = readLibraryMetadata(session.library);
-    if (
-      captured === undefined || session.agent !== agent || !Array.isArray(session.searchText) ||
-      session.searchText.some((value: unknown) => typeof value !== "string")
-    ) throw new Error("invalid history snapshot");
+    if (captured === undefined) throw new Error("invalid history snapshot");
     return { ...session, library: library.get(session.sessionRef) ?? captured };
   });
   return { ...snapshot, sessions };
+}
+
+export async function historyHeadMatchesSnapshot(
+  stateDirectory: string,
+  agent: Agent,
+  expectedSnapshotId: string,
+): Promise<boolean> {
+  if (!isHistorySnapshotId(expectedSnapshotId)) throw new Error("invalid history snapshot identity");
+  const currentSnapshotId = await loadHistoryHead(stateDirectory, agent);
+  if (currentSnapshotId === null) return false;
+  if (currentSnapshotId === expectedSnapshotId) return true;
+  const [expected, current] = await Promise.all([
+    loadStoredSnapshot(stateDirectory, agent, expectedSnapshotId),
+    loadStoredSnapshot(stateDirectory, agent, currentSnapshotId),
+  ]);
+  // Snapshot identity, scan time, and aggregate reuse counters are publication
+  // metadata. A no-op incremental scan may legitimately change only those
+  // fields; every user-visible and recovery-relevant value must still match.
+  return isDeepStrictEqual({
+    schemaVersion: expected.schemaVersion,
+    agent: expected.agent,
+    sessions: expected.sessions,
+    auxiliaryFiles: expected.auxiliaryFiles,
+    warnings: expected.warnings,
+  }, {
+    schemaVersion: current.schemaVersion,
+    agent: current.agent,
+    sessions: current.sessions,
+    auxiliaryFiles: current.auxiliaryFiles,
+    warnings: current.warnings,
+  });
 }
 
 export async function loadHistoryHead(stateDirectory: string, agent: Agent): Promise<string | null> {

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { pathFlavorForPlatform, samePath } from "../../domain/host-path.js";
 import { transactionReference } from "../../domain/transaction.js";
+import { canonicalDigest } from "../../domain/history-identity.js";
 import { validateCodexHistoryBaseBoundary } from "./migration/archive.js";
 import { discoverCodexRollouts, requireRealDirectory } from "./carrier.js";
 import {
@@ -72,6 +73,8 @@ export interface CodexProviderChange {
 }
 
 export interface CodexProviderUnifyResult {
+  readonly planRef: string;
+  readonly replanRequired?: true;
   readonly targetProvider: string;
   readonly changes: readonly CodexProviderChange[];
   readonly unchanged: number;
@@ -327,12 +330,23 @@ export async function unifyCodexProviders(
   options: CodexProviderOptions,
   requested: string,
   apply: boolean,
+  expectedPlanRef?: string,
 ): Promise<CodexProviderUnifyResult> {
+  if (expectedPlanRef !== undefined && !/^ahproviderplan1_[0-9a-f]{64}$/u.test(expectedPlanRef)) throw new Error("invalid provider plan reference");
   const workspace = await mkdtemp(path.join(os.tmpdir(), "agenthist-provider-"));
   try {
     const plan = await buildUnifyPlan(options, requested, workspace);
+    const planRef = `ahproviderplan1_${canonicalDigest({
+      codexHome: plan.inventory.source.codexHome, sqliteHome: plan.inventory.source.sqliteHome,
+      database: plan.inventory.databasePath, currentProvider: plan.inventory.source.currentProvider, target: plan.target,
+      sessions: plan.inventory.sessions.map((session) => ({ sessionRef: session.sessionRef, provider: session.parsed.provider, archived: session.archived }))
+        .sort((left, right) => left.sessionRef.localeCompare(right.sessionRef)),
+    })}`;
+    if (apply && expectedPlanRef !== undefined && expectedPlanRef !== planRef) {
+      return { planRef, replanRequired: true, targetProvider: plan.target, changes: plan.changes, unchanged: plan.unchanged };
+    }
     if (plan.effects.length === 0 || !apply) {
-      return { targetProvider: plan.target, changes: plan.changes, unchanged: plan.unchanged };
+      return { planRef, targetProvider: plan.target, changes: plan.changes, unchanged: plan.unchanged };
     }
     const journal = await prepareCodexTransaction({
       stateDirectory: options.stateDirectory,
@@ -344,6 +358,7 @@ export async function unifyCodexProviders(
     });
     const committed = await executePreparedCodexTransaction(options.stateDirectory, journal);
     return {
+      planRef,
       targetProvider: plan.target,
       changes: plan.changes,
       unchanged: plan.unchanged,

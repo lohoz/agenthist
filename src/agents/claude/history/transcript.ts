@@ -69,6 +69,13 @@ export const CLAUDE_CONTENT_REPLACEMENT_NOTE = "claude.content_replacement.mater
 const CLAUDE_API_COMPACTION_ENCRYPTED_NOTE = "claude.api_compaction_encrypted_content.skipped";
 const CLAUDE_SERVER_PAUSE_TURN_NOTE = "claude.server_pause_turn.materialized";
 
+export class UnsupportedClaudeTranscriptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnsupportedClaudeTranscriptError";
+  }
+}
+
 export interface ParsedClaudeTranscript {
   readonly nativeId: string;
   readonly firstRootRecordUuid: string;
@@ -2716,7 +2723,9 @@ function materializeCompactConversation(
     summary?.kind !== "message" || summary.role !== "system" || summary.text.trim() === "" ||
     summary.contentKinds?.length !== 1 ||
     (summary.contentKinds[0] !== "compact_summary" && summary.contentKinds[0] !== "api_compaction_summary")
-  ) throw new Error("Claude compaction checkpoint does not reference its projected summary");
+  ) throw new UnsupportedClaudeTranscriptError(
+    "Claude compaction checkpoint does not reference its projected summary",
+  );
   const summaryMessage: ConversationMessage = {
     kind: "message",
     role: "user",
@@ -2729,7 +2738,9 @@ function materializeCompactConversation(
   const preserved = checkpoint.preservedConversationIndexes.map((index): ConversationMessage => {
     const item = conversation[index]!;
     if (!plainPortableMessage(item)) {
-      throw new Error("Claude partial compaction checkpoint references non-portable preserved history");
+      throw new UnsupportedClaudeTranscriptError(
+        "Claude partial compaction checkpoint references non-portable preserved history",
+      );
     }
     if (checkpoint.kind === "partial_from") return item;
     return {
@@ -4446,7 +4457,7 @@ export async function parseClaudeTranscript(
   if (recordCount === 0) identityFailures.add("empty_transcript");
   if (roots.length === 0) identityFailures.add("graph_root_missing");
   if (identityFailures.size !== 0) {
-    throw new Error(
+    throw new UnsupportedClaudeTranscriptError(
       `Claude Code transcript lacks a verified native identity (${[...identityFailures].sort().join(", ")}): ${filePath}`,
     );
   }

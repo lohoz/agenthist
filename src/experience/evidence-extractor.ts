@@ -58,6 +58,7 @@ import {
 const MAXIMUM_FAST_OUTPUT_TOKENS = 8_000;
 
 export interface PrepareExperienceReviewOptions extends ExperienceDryRunOptions {
+  readonly analysisConfiguration?: AnalysisConfiguration;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly outputDirectory?: string;
@@ -74,7 +75,11 @@ export type PrepareExperienceReviewProgress =
       readonly currentBatch: number;
       readonly totalBatches: number;
     }
-  | { readonly phase: "organizing" }
+  | {
+      readonly phase: "organizing";
+      readonly currentRequest?: number;
+      readonly totalRequests?: number;
+    }
   | { readonly phase: "publishing" }
   | { readonly phase: "finalizing" };
 
@@ -325,7 +330,7 @@ export async function prepareExperienceReview(
     let configuration: AnalysisConfiguration;
     try {
       options.onProgress?.({ phase: "configuring" });
-      configuration = await resolveAnalysisConfiguration({
+      configuration = options.analysisConfiguration ?? await resolveAnalysisConfiguration({
         cwd: options.cwd,
         environment: options.environment,
         createTemplate: true,
@@ -436,6 +441,11 @@ export async function prepareExperienceReview(
           requestInputTokens: prepared.requestInputTokens,
           ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
           ...(options.processRunner === undefined ? {} : { processRunner: options.processRunner }),
+          onProgress: (currentRequest, totalRequests) => options.onProgress?.({
+            phase: "organizing",
+            currentRequest,
+            totalRequests,
+          }),
         });
     const review = remainingCards !== 0 || consolidation.status === "partial"
       ? undefined
@@ -625,6 +635,7 @@ export function experienceReviewResultJson(result: PrepareExperienceReviewResult
         directory: result.review.publication.directory,
         review_file: result.review.publication.reviewFile,
         audit_file: result.review.publication.auditFile,
+        data_file: result.review.publication.dataFile,
       },
     }),
     discoveries: result.discoveries.map((discovery, index) => ({

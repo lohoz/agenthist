@@ -66,6 +66,7 @@ export interface PrepareImportConversionsOptions {
   readonly workspace: string;
   readonly allocateObjectId: () => string;
   readonly pathFlavor: PathFlavor;
+  readonly allowLossy?: boolean;
 }
 
 interface PreparedItem extends ImportConversionPlanItem {
@@ -129,6 +130,58 @@ function targetFor(options: PrepareImportConversionsOptions, entry: ArchiveEntry
   return target;
 }
 
+export function buildLossyPortableSession(source: StoredSession): {
+  readonly session: PortableContextSession;
+  readonly findings: readonly ConversionFinding[];
+} | undefined {
+  if (!path.win32.isAbsolute(source.context) && !path.posix.isAbsolute(source.context)) return undefined;
+  const readable = source.conversation.flatMap((item) => {
+    if (item.kind !== "message" || item.role !== "user" && item.role !== "assistant") return [];
+    const text = item.text.trim();
+    if (text === "" || Number.isNaN(Date.parse(item.timestamp))) return [];
+    return [{ role: item.role, text, timestamp: item.timestamp, model: item.model || source.model || "unknown" }];
+  });
+  const firstUser = readable.findIndex((message) => message.role === "user");
+  if (firstUser < 0) return undefined;
+  const retainedMessageCount = readable.length - firstUser;
+  const normalized: typeof readable = [];
+  for (const message of readable.slice(firstUser)) {
+    const previous = normalized.at(-1);
+    if (previous?.role === message.role) {
+      normalized[normalized.length - 1] = { ...previous, text: `${previous.text}\n\n${message.text}` };
+    } else {
+      normalized.push(message);
+    }
+  }
+  if (normalized.length === 0) return undefined;
+  return {
+    session: {
+      schemaVersion: "agenthist.portable-context/v1",
+      sourceAgent: source.agent,
+      sourceSessionRef: source.sessionRef,
+      sourceNativeId: source.nativeId,
+      workingDirectory: source.context,
+      defaultModel: source.model || "unknown",
+      title: source.library.name || source.title,
+      messages: normalized.map((message, ordinal) => ({
+        ordinal,
+        role: message.role,
+        blocks: [{ kind: "text", text: message.text }],
+        timestamp: message.timestamp,
+        model: message.model,
+      })),
+    },
+    findings: [
+      { code: "portable.lossy_text_fallback", disposition: "degraded", count: 1 },
+      {
+        code: "portable.lossy_content_omitted",
+        disposition: "skipped",
+        count: Math.max(1, source.conversation.length - retainedMessageCount),
+      },
+    ],
+  };
+}
+
 async function prepareItems(options: PrepareImportConversionsOptions): Promise<PreparedItem[]> {
   const prepared: PreparedItem[] = [];
   for (const sourceAgent of AGENTS) {
@@ -149,19 +202,41 @@ async function prepareItems(options: PrepareImportConversionsOptions): Promise<P
       const conversionKey = deriveConversionKey(sourceAgent, targetAgent, entry.sessionRef, revision);
       try {
         const portableSource = await materializer.prepare(entry.sessionRef);
-        const normalization = portableSource.normalization;
-        requireResourceClosure(normalization.session, portableSource.resources, entry.sessionRef);
-        const projection = normalization.session === undefined
+        const conversionSource = portableSource.source;
+        const target = agentAdapter(targetAgent).portableTarget;
+        let normalization = portableSource.normalization;
+        let resourceObjects: readonly ManagedResourceObject[] = portableSource.resources;
+        requireResourceClosure(normalization.session, resourceObjects, entry.sessionRef);
+        let projection = normalization.session === undefined
           ? undefined
-          : agentAdapter(targetAgent).portableTarget.project(normalization.session, conversionKey);
-        const findings = normalizeConversionFindings([
+          : target.project(normalization.session, conversionKey);
+        let findings = normalizeConversionFindings([
           ...normalization.findings,
           ...(projection?.findings ?? []),
         ]);
+        const lossy = options.allowLossy && conversionStatus(findings) === "blocked"
+          ? buildLossyPortableSession(conversionSource)
+          : undefined;
+        if (lossy !== undefined) {
+          const originalBlockers = findings.flatMap((finding) => finding.disposition === "blocked"
+            ? [{ ...finding, disposition: "skipped" as const }]
+            : []);
+          normalization = {
+            status: "degraded",
+            session: lossy.session,
+            findings: normalizeConversionFindings([...originalBlockers, ...lossy.findings]),
+          };
+          resourceObjects = [];
+          projection = target.project(lossy.session, conversionKey);
+          findings = normalizeConversionFindings([
+            ...normalization.findings,
+            ...projection.findings,
+          ]);
+        }
         prepared.push({
           sourceAgent,
           targetAgent,
-          source: portableSource.source,
+          source: conversionSource,
           sourceNativeId: entry.nativeId,
           sourceSessionRef: entry.sessionRef,
           sourceRevision: revision,
@@ -171,8 +246,8 @@ async function prepareItems(options: PrepareImportConversionsOptions): Promise<P
           findings,
           ...(normalization.session === undefined ? {} : { portable: normalization.session }),
           ...(projection === undefined ? {} : { projection }),
-          resourceObjects: portableSource.resources,
-          resources: portableSource.resources.map(managedResourceReference),
+          resourceObjects,
+          resources: resourceObjects.map(managedResourceReference),
         });
       } catch (error) {
         if (typeof (error as NodeJS.ErrnoException)?.code === "string") throw error;

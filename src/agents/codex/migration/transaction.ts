@@ -11,7 +11,12 @@ import {
 } from "../../../domain/history.js";
 import { transactionReference, type TransactionJournal } from "../../../domain/transaction.js";
 import { applyPosixMode, copyStableFile, digestFile, syncDirectory } from "../../../infrastructure/files.js";
-import { loadHistoryHead, loadSnapshot, restoreHistoryHead } from "../../../infrastructure/history-store.js";
+import {
+  historyHeadMatchesSnapshot,
+  loadHistoryHead,
+  loadSnapshot,
+  restoreHistoryHead,
+} from "../../../infrastructure/history-store.js";
 import {
   observeManagedResourceEffects,
   prepareManagedResourceTransactionEffects,
@@ -1242,13 +1247,12 @@ export async function previewCodexRollback(
   await validateNativeTarget(payload);
   const native = await observeEffects(payload, journal.operation === "codex_provider_unify");
   const resources: ManagedResourceObservations = { positions: [], bySession: new Map() };
-  const head = await loadHistoryHead(stateDirectory, "codex");
   return {
     transactionRef: transactionReference(journal.id),
     operation: journal.operation as CodexTransactionOperation,
     state: journal.state,
     direction: "rollback",
-    ready: head === payload.historyHeadAfter && native.every((item) =>
+    ready: await historyHeadMatchesSnapshot(stateDirectory, "codex", payload.historyHeadAfter) && native.every((item) =>
       positionMatches(item.row, "after") && positionMatches(item.section, "after") &&
       positionMatches(item.file, "after") &&
       (item.goal === undefined || positionMatches(item.goal, "after"))

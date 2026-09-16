@@ -95,7 +95,11 @@ export const claudeAdapter = {
       return [source.configRoot];
     },
     async scan(options) {
-      return (await scanClaude({ stateDirectory: options.stateDirectory, ...sourceOptions(options) })).snapshot;
+      return (await scanClaude({
+        stateDirectory: options.stateDirectory,
+        ...sourceOptions(options),
+        isolateInvalidSessions: true,
+      })).snapshot;
     },
   },
   archive: {

@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { claudeProjectCarrier } from "../../../src/agents/claude/project.js";
 import { parsePiSession } from "../../../src/agents/pi/history/session.js";
+import { importHistoryArchive } from "../../../src/application/history-import.js";
 import { runCli } from "../../../src/cli/program.js";
 import { nativeFixturePath } from "../../support/native-path.js";
 import { createCodexTargetDatabase } from "../../support/conversion/codex-target.js";
@@ -74,7 +75,10 @@ function assistantMessage(content: readonly Record<string, unknown>[], timestamp
   };
 }
 
-async function createPiSource(sessionRoot: string): Promise<void> {
+async function createPiSource(
+  sessionRoot: string,
+  options: { readonly invalidImage?: boolean } = {},
+): Promise<void> {
   const start = Date.parse("2026-08-17T01:00:00.000Z");
   const records = [{
     type: "session",
@@ -103,14 +107,16 @@ async function createPiSource(sessionRoot: string): Promise<void> {
   }, {
     type: "message",
     id: "dddddddd",
-    parentId: "bbbbbbbb",
+    parentId: options.invalidImage ? "aaaaaaaa" : "bbbbbbbb",
     timestamp: "2026-08-17T01:00:03.000Z",
     message: {
       role: "user",
-      content: [
-        { type: "text", text: PI_ACTIVE_BRANCH_MARKER },
-        { type: "image", data: PI_USER_IMAGE.toString("base64"), mimeType: "image/png" },
-      ],
+      content: options.invalidImage
+        ? [{ type: "image", data: "invalid-base64!", mimeType: "image/png" }]
+        : [
+            { type: "text", text: PI_ACTIVE_BRANCH_MARKER },
+            { type: "image", data: PI_USER_IMAGE.toString("base64"), mimeType: "image/png" },
+          ],
       timestamp: start + 3_000,
     },
   }, {
@@ -326,6 +332,48 @@ async function importConversion(options: {
     findingCodes: plan.routes[0]!.findings.map((finding) => finding.code),
   };
 }
+
+test("archive import forwards the explicit lossy conversion choice", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-pi-lossy-archive-"));
+  const runtime = { environment: { HOME: root }, cwd: root, home: root };
+  try {
+    const sourceRoot = path.join(root, "pi-source");
+    const sourceState = path.join(root, "source-state");
+    const archive = path.join(root, "pi-source.agenthist");
+    const targetConfig = path.join(root, "target-claude");
+    const targetWorkspace = path.join(root, "target-workspace");
+    const targetState = path.join(root, "target-state");
+    await createPiSource(sourceRoot, { invalidImage: true });
+    await mkdir(targetConfig, { recursive: true });
+    await mkdir(targetWorkspace, { recursive: true });
+    await scanAndExport(runtime, sourceState, archive, "pi", ["--pi-session-dir", sourceRoot]);
+
+    const common = {
+      file: archive,
+      stateDirectory: targetState,
+      targetAgent: "claude" as const,
+      claudeConfigRoot: targetConfig,
+      pathMappings: [`${PI_WORKSPACE}=${targetWorkspace}`],
+      mode: "dry_run" as const,
+      environment: runtime.environment,
+      cwd: runtime.cwd,
+      home: runtime.home,
+    };
+    const blocked = await importHistoryArchive(common);
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.blocked, 1);
+
+    const lossy = await importHistoryArchive({ ...common, allowLossyConversion: true });
+    assert.equal(lossy.status, "ready");
+    assert.equal(lossy.items.length, 1);
+    assert.equal(lossy.items[0]!.quality, "degraded");
+    assert.equal(lossy.items[0]!.findings.some((finding) =>
+      finding.code === "portable.lossy_text_fallback"), true);
+    assert.deepEqual(lossy.resources, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("Pi conversions complete all six routes and remain readable in the target Agent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-pi-conversion-"));

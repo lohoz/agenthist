@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="AgentHist">
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#2563eb"/>
+  <path d="M254 254h516c72 0 130 58 130 130v250c0 72-58 130-130 130H488L300 884l34-120h-80c-72 0-130-58-130-130V384c0-72 58-130 130-130Z" fill="none" stroke="#fff" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="315" cy="424" r="34" fill="#fff"/>
+  <circle cx="315" cy="548" r="34" fill="#fff"/>
+  <circle cx="315" cy="672" r="34" fill="#fff"/>
+  <path d="M315 458v56m0 68v56M405 424h304M405 548h238M405 672h174" fill="none" stroke="#fff" stroke-width="44" stroke-linecap="round"/>
+</svg>

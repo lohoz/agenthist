@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { canonicalDigest } from "../domain/history-identity.js";
 import { readStableSmallFile } from "../infrastructure/files.js";
+import { requestHttpAnalysis } from "./http-model-runner.js";
 import {
   CliModelFailure,
   detectCliAnalysisBackend,
@@ -35,6 +36,8 @@ type ConfigurationVariable = (typeof VARIABLES)[number];
 export type AnalysisTier = "fast" | "deep";
 export type AnalysisBackend =
   | "openai-compatible-chat"
+  | "openai-responses"
+  | "anthropic-messages"
   | "codex-cli"
   | "claude-cli"
   | "opencode-cli"
@@ -53,6 +56,7 @@ export type AnalysisFailureReason =
   | "rate_limited"
   | "upstream_failed"
   | "request_rejected"
+  | "content_rejected"
   | "context_limit_exceeded"
   | "protocol_mismatch"
   | "invalid_model_output";
@@ -88,6 +92,7 @@ interface ConfiguredValue {
 }
 
 interface BaseAnalysisProfile {
+  readonly contextWindow?: number;
   readonly tier: AnalysisTier;
   readonly backend: AnalysisBackend;
   readonly endpoint: string;
@@ -98,7 +103,9 @@ interface BaseAnalysisProfile {
 }
 
 export interface OpenAIAnalysisProfile extends BaseAnalysisProfile {
-  readonly backend: "openai-compatible-chat";
+  readonly backend: "openai-compatible-chat" | "openai-responses" | "anthropic-messages";
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly streaming?: boolean;
   readonly baseUrl: string;
   readonly requestUrl: string;
   readonly apiKey: string;
@@ -107,7 +114,7 @@ export interface OpenAIAnalysisProfile extends BaseAnalysisProfile {
 
 export interface CliAnalysisProfile extends BaseAnalysisProfile {
   readonly backend: "codex-cli" | "claude-cli" | "opencode-cli" | "pi-cli";
-  readonly command: "codex" | "claude" | "opencode" | "pi";
+  readonly command: string;
   readonly workingDirectory: string;
   readonly environment: NodeJS.ProcessEnv;
 }
@@ -125,6 +132,17 @@ export interface ResolveAnalysisConfigurationOptions {
   readonly environment: NodeJS.ProcessEnv;
   readonly createTemplate: boolean;
   readonly processRunner?: AnalysisProcessRunner;
+}
+
+export function nativeAgentAnalysisConfiguration(options: {
+  readonly agent: "codex" | "claude" | "opencode" | "pi";
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly command?: string;
+}): AnalysisConfiguration {
+  const profile = cliProfile("fast", `${options.agent}-cli`, options.cwd, options.environment, undefined);
+  const fast = { ...profile, command: options.command ?? profile.command };
+  return { fast, deep: { ...fast, tier: "deep" }, deepBinding: "fast" };
 }
 
 export interface AnalysisMessage {
@@ -150,6 +168,7 @@ export interface AnalysisResponseFormat {
 }
 
 export interface RequestAnalysisOptions {
+  readonly timeoutMs?: number;
   readonly profile: AnalysisProfile;
   readonly stage: string;
   readonly messages: readonly AnalysisMessage[];
@@ -291,6 +310,15 @@ function singleLine(value: ConfiguredValue, name: ConfigurationVariable): string
   return value.value.trim();
 }
 
+function isLoopbackHttpHostname(hostname: string): boolean {
+  // URL.hostname retains brackets for IPv6 literals and canonicalizes the
+  // alternative IPv4 spellings accepted by the WHATWG URL parser. A single
+  // trailing root label is equivalent for the localhost DNS name.
+  const normalized = hostname.toLowerCase().replace(/\.$/u, "");
+  if (normalized === "localhost" || normalized === "[::1]") return true;
+  return /^127\.(?:\d{1,3}\.){2}\d{1,3}$/u.test(normalized);
+}
+
 function serviceRoot(value: ConfiguredValue, name: ConfigurationVariable): { readonly baseUrl: string; readonly requestUrl: string } {
   let parsed: URL;
   try { parsed = new URL(singleLine(value, name)); } catch {
@@ -300,6 +328,9 @@ function serviceRoot(value: ConfiguredValue, name: ConfigurationVariable): { rea
     (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username !== "" || parsed.password !== "" ||
     parsed.search !== "" || parsed.hash !== ""
   ) throw configurationFailure(`${name} must be an HTTP(S) service root without credentials, query, or fragment (${value.source})`, value.source);
+  if (parsed.protocol === "http:" && !isLoopbackHttpHostname(parsed.hostname)) {
+    throw configurationFailure(`${name} must use HTTPS unless its host is localhost or a loopback IP address (${value.source})`, value.source);
+  }
   const pathname = parsed.pathname.replace(/\/+$/, "");
   if (pathname.toLowerCase().endsWith("/chat/completions")) {
     throw configurationFailure(`${name} must not include /chat/completions (${value.source})`, value.source);
@@ -764,8 +795,10 @@ async function requestOpenAIAnalysis(
 }
 
 export async function requestAnalysis(options: RequestAnalysisOptions): Promise<AnalysisCompletion> {
-  if (options.profile.backend === "openai-compatible-chat") {
-    return requestOpenAIAnalysis({ ...options, profile: options.profile });
+  if (!("command" in options.profile)) {
+    return options.profile.streaming || options.profile.backend !== "openai-compatible-chat"
+      ? requestHttpAnalysis({ ...options, profile: options.profile })
+      : requestOpenAIAnalysis({ ...options, profile: options.profile });
   }
   try {
     return await requestCliAnalysis({

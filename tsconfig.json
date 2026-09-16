@@ -19,5 +19,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", ".build"]
+  "exclude": ["node_modules", ".build", "src/desktop/renderer", "tests/desktop", "tests/e2e"]
 }

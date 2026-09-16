@@ -59,3 +59,27 @@ test("Agent CLI process arguments remain literal across platform launchers", asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Agent CLI resolution does not fall back to the parent process PATH", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenthist-process-missing-"));
+  try {
+    await assert.rejects(
+      runAnalysisProcess({
+        command: "agenthist-command-that-does-not-exist",
+        args: [],
+        cwd: root,
+        environment: { PATH: "" },
+        stdin: "",
+        timeoutMs: 10_000,
+        outputByteLimit: 64 * 1024,
+      }),
+      (error: unknown) => {
+        assert.equal((error as Error).name, "ProcessExecutionFailure");
+        assert.match((error as Error).message, /analysis CLI was not found/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

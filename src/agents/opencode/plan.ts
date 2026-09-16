@@ -68,12 +68,13 @@ export function readOpenCodePlanLocations(
       const worktree = row[worktreeIndex];
       const vcs = row[vcsIndex];
       if (
-        id === undefined || typeof worktree !== "string" || !path.isAbsolute(worktree) || path.resolve(worktree) !== worktree ||
+        id === undefined || typeof worktree !== "string" || !path.isAbsolute(worktree) ||
         (vcs !== null && typeof vcs !== "string")
       ) throw new Error("OpenCode project plan location is invalid");
+      const normalizedWorktree = path.resolve(worktree);
       projects.set(id, vcs === null || vcs === ""
         ? { root: path.resolve(dataRoot), projectPlans: false }
-        : { root: worktree, projectPlans: true });
+        : { root: normalizedWorktree, projectPlans: true });
     }
 
     const bySession = new Map<string, OpenCodePlanLocation>();

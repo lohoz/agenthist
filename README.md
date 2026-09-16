@@ -13,7 +13,7 @@
 
 AgentHist brings sessions from supported coding Agents into one place for browsing, searching, exporting, and selective importing. It supports cross-machine migration within the same Agent and conversion between Agents.
 
-It can also find recurring requirements, preferences, and working methods across sessions, then organize them into evidence-backed candidates for review, merging, and refinement. Incremental processing and tiered model calls reduce the cost of repeated analysis.
+It can also find recurring requirements, preferences, and working methods across sessions, then organize them into evidence-backed candidates for review, merging, and refinement. The GUI combines extraction and organization into one model request; the CLI also retains its incremental evidence workflow.
 
 ## ✨ Highlights
 
@@ -35,7 +35,7 @@ It can also find recurring requirements, preferences, and working methods across
 
 ## 📦 Installation
 
-Node.js 24 is required.
+For the CLI, Node.js 24 is required.
 
 ```bash
 npm install -g agenthist
@@ -46,6 +46,63 @@ You can also run it with npx:
 ```bash
 npx agenthist --help
 ```
+
+### GUI desktop application
+
+Download the package for your operating system and architecture from [GitHub Releases](https://github.com/lohoz/agenthist/releases/latest). AgentHist Desktop bundles Electron: **no Node.js installation or web server is needed**.
+
+| Platform | Packages |
+| --- | --- |
+| Windows x64 | Setup.exe / Portable.exe |
+| macOS Intel / Apple Silicon | x64 / arm64 DMG and application ZIP |
+| Linux x64 / ARM64 | DEB, RPM and AppImage |
+
+### CLI command line
+
+The npm / npx commands above install the CLI for interactive terminal use, scripts and automation. GUI and CLI share history parsing, migration and transaction logic. Continuing a conversation requires the corresponding Agent to be installed locally. To use the CLI from this source version, run `npm run build && npm link`.
+
+## 🖥️ GUI workflow
+
+- **Chats:** A compact disk → directory → conversation tree groups every Agent under the same workspace, with search, bulk export and hidden-history recovery.
+- **Continue:** Reopen a native session or preview a cross-Agent conversion. Converted sessions appear immediately in history.
+- **Experience:** Select an Agent's existing API configuration, test the model, then preview all history or selected conversations. One model request produces final experience candidates; repeated context is compacted losslessly on the local machine.
+- **Settings:** Grouped appearance, history providers, Agent paths, experience models and terminal settings. Codex provider unification supports preview, confirmation and transactional rollback.
+
+<p align="center"><img src="readme-pic/public/history.png" alt="AgentHist history and directory tree" width="100%"></p>
+
+| Cross-Agent continuation | Experience extraction |
+| --- | --- |
+| ![Conversion preview](readme-pic/public/conversion.png) | ![Experience preview](readme-pic/public/experience.png) |
+
+<details>
+<summary>Settings screenshot</summary>
+
+![Settings](readme-pic/public/settings.png)
+
+</details>
+
+Screenshots use synthetic examples or redacted content, without private histories or API credentials.
+
+## 🛠️ GUI build and packaging
+
+```bash
+git clone --branch ui https://github.com/lohoz/agenthist.git
+cd agenthist
+npm ci
+npm run desktop:dev
+```
+
+Development requires Node.js 24. Run packaging on the target operating system:
+
+```bash
+npm run desktop:dist:win                 # Windows x64: EXE
+npm run desktop:dist:mac -- --arm64      # Apple Silicon: DMG / ZIP
+npm run desktop:dist:mac -- --x64        # Intel Mac: DMG / ZIP
+npm run desktop:dist:linux -- --x64      # Linux: DEB / RPM / AppImage
+npm run desktop:dist:linux -- --arm64    # Linux ARM64
+```
+
+Artifacts are written to `release/`; `npm run desktop:pack` creates only the unpacked application for the current host. DMG packaging requires macOS. See the [complete build guide](docs/desktop-build.md#english) for dependencies, installation, signing, verification and release automation. Community builds are unsigned and macOS is not notarized.
 
 ## Let Agents use AgentHist
 
@@ -245,7 +302,7 @@ Repeated runs reuse the local evidence index and cached model results for unchan
 - AgentHist handles history records only. It does not migrate Base URLs, API keys, tokens, OAuth data, or other connection settings.
 - Run `agenthist help <command>` for help in the terminal.
 
-See the [FAQ](docs/faq.md) for common questions.
+See the [FAQ](docs/faq.md) for common questions. Release history, security reporting, and local-data handling are documented in the [changelog](CHANGELOG.md), [security policy](SECURITY.md), and [privacy guide](PRIVACY.md).
 
 ## Build from source
 

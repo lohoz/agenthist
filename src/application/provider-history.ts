@@ -39,6 +39,8 @@ export interface CodexProviderHistoryChange {
 }
 
 export interface CodexProviderHistoryUnifyResult {
+  readonly planRef: string;
+  readonly replanRequired?: true;
   readonly targetProvider: string;
   readonly dryRun: boolean;
   readonly changed: number;
@@ -93,12 +95,15 @@ export async function unifyCodexHistoryProviders(
   options: CodexProviderHistoryOptions,
   requested: string,
   apply: boolean,
+  expectedPlanRef?: string,
 ): Promise<CodexProviderHistoryUnifyResult> {
   const execute = async (): Promise<CodexProviderHistoryUnifyResult> => {
-    const result = await unifyCodexProviders(options, requested, apply);
+    const result = await unifyCodexProviders(options, requested, apply, expectedPlanRef);
     return {
+      planRef: result.planRef,
+      ...(result.replanRequired ? { replanRequired: true as const } : {}),
       targetProvider: result.targetProvider,
-      dryRun: !apply,
+      dryRun: !apply || result.replanRequired === true,
       changed: result.changes.length,
       unchanged: result.unchanged,
       changes: result.changes.map((change) => ({

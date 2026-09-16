@@ -18,7 +18,12 @@ import {
   type ExclusiveFileImage,
 } from "../../../infrastructure/exclusive-file.js";
 import { digestFile } from "../../../infrastructure/files.js";
-import { loadHistoryHead, loadSnapshot, restoreHistoryHead } from "../../../infrastructure/history-store.js";
+import {
+  historyHeadMatchesSnapshot,
+  loadHistoryHead,
+  loadSnapshot,
+  restoreHistoryHead,
+} from "../../../infrastructure/history-store.js";
 import {
   observeManagedResourceEffects,
   prepareManagedResourceTransactionEffects,
@@ -627,6 +632,8 @@ async function reconcileForward(
     stateDirectory,
     configRoot: payload.target.configRoot,
     importedLibrary: library,
+    isolateInvalidSessions: true,
+    requiredNativeIds: payload.sessions.map((session) => session.nativeId),
   });
   const reconciled = { ...payload, historyHeadAfter: scanned.snapshot.snapshotId };
   return { journal: await saveTransaction(stateDirectory, withPayload(journal, reconciled)), payload: reconciled };
@@ -677,7 +684,7 @@ export async function previewClaudeRollback(
   return {
     transactionRef: transactionReference(journal.id), operation: "history_import", state: journal.state,
     direction: "rollback", ready: nativeAt(observed, "after") &&
-      await loadHistoryHead(stateDirectory, "claude") === payload.historyHeadAfter,
+      await historyHeadMatchesSnapshot(stateDirectory, "claude", payload.historyHeadAfter),
     items: payload.sessions.length, findings: observed.findings,
   };
 }

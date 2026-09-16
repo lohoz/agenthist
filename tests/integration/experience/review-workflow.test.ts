@@ -158,6 +158,7 @@ test("experience extraction forms one cached workflow and stops at handoff", asy
           readonly candidates: number;
           readonly review_file: string;
           readonly audit_file: string;
+          readonly data_file: string;
         };
       };
     };
@@ -171,6 +172,12 @@ test("experience extraction forms one cached workflow and stops at handoff", asy
     assert.match(reviewText, /AgentHist does not consume or constrain/);
     assert.doesNotMatch(reviewText, /decisions\.json|experience apply/);
     assert.match(await readFile(output.data.review.audit_file, "utf8"), /Unrouted Evidence Audit/);
+    const reviewData = JSON.parse(await readFile(output.data.review.data_file, "utf8")) as {
+      readonly format: string;
+      readonly reviewRef: string;
+    };
+    assert.equal(reviewData.format, "agenthist.experience-review/v1");
+    assert.equal(reviewData.reviewRef, output.data.review.review_id);
     assert.equal("decisions_file" in output.data.review, false);
 
     const cachedDirectory = path.join(root, "review-cached");

@@ -4,6 +4,7 @@ import path from "node:path";
 
 import spawn from "cross-spawn";
 
+import { resolveExecutable } from "../infrastructure/executable.js";
 import type {
   AnalysisCompletion,
   AnalysisMessage,
@@ -14,6 +15,7 @@ import type {
 
 const RESPONSE_BYTE_LIMIT = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 90_000;
+const DETECTION_TIMEOUT_MS = 12_000;
 const OPENCODE_ANALYSIS_AGENT = "agenthist";
 const OPENCODE_ANALYSIS_AGENT_CONFIG = {
   description: "Isolated structured analysis for AgentHist",
@@ -98,76 +100,90 @@ function appendChunk(
   return nextBytes;
 }
 
-export const runAnalysisProcess: AnalysisProcessRunner = async (request) => new Promise((resolve, reject) => {
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  let outputBytes = 0;
-  let settled = false;
-  let child: ReturnType<typeof spawn>;
-
-  const rejectOnce = (error: Error): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    child.kill();
-    reject(error);
-  };
-
-  try {
-    child = spawn(request.command, [...request.args], {
-      cwd: request.cwd,
-      env: request.environment,
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    reject(new ProcessExecutionFailure(
-      code === "ENOENT" ? `analysis CLI was not found: ${request.command}` : `cannot start analysis CLI: ${request.command}`,
-      code === "ENOENT" ? "command_not_found" : "spawn_failed",
-    ));
-    return;
+export const runAnalysisProcess: AnalysisProcessRunner = async (request) => {
+  const executable = await resolveExecutable(request.command, {
+    cwd: request.cwd,
+    environment: request.environment,
+    searchCurrentDirectory: false,
+  });
+  if (executable === undefined) {
+    throw new ProcessExecutionFailure(
+      `analysis CLI was not found: ${request.command}`,
+      "command_not_found",
+    );
   }
 
-  const timer = setTimeout(() => {
-    rejectOnce(new ProcessExecutionFailure(`analysis CLI timed out: ${request.command}`, "timeout"));
-  }, request.timeoutMs);
+  return new Promise((resolve, reject) => {
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let outputBytes = 0;
+    let settled = false;
+    let child: ReturnType<typeof spawn>;
 
-  child.stdout!.on("data", (chunk: Buffer) => {
+    const rejectOnce = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      reject(error);
+    };
+
     try {
-      outputBytes = appendChunk(stdout, chunk, outputBytes, request.outputByteLimit);
+      child = spawn(executable, [...request.args], {
+        cwd: request.cwd,
+        env: request.environment,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
     } catch (error) {
-      rejectOnce(error as Error);
+      const code = (error as NodeJS.ErrnoException).code;
+      reject(new ProcessExecutionFailure(
+        code === "ENOENT" ? `analysis CLI was not found: ${request.command}` : `cannot start analysis CLI: ${request.command}`,
+        code === "ENOENT" ? "command_not_found" : "spawn_failed",
+      ));
+      return;
     }
-  });
-  child.stderr!.on("data", (chunk: Buffer) => {
-    try {
-      outputBytes = appendChunk(stderr, chunk, outputBytes, request.outputByteLimit);
-    } catch (error) {
-      rejectOnce(error as Error);
-    }
-  });
-  child.on("error", (error: NodeJS.ErrnoException) => {
-    rejectOnce(new ProcessExecutionFailure(
-      error.code === "ENOENT" ? `analysis CLI was not found: ${request.command}` : `cannot start analysis CLI: ${request.command}`,
-      error.code === "ENOENT" ? "command_not_found" : "spawn_failed",
-    ));
-  });
-  child.on("close", (exitCode) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    resolve({
-      exitCode: exitCode ?? 1,
-      stdout: Buffer.concat(stdout).toString("utf8"),
-      stderr: Buffer.concat(stderr).toString("utf8"),
+
+    const timer = setTimeout(() => {
+      rejectOnce(new ProcessExecutionFailure(`analysis CLI timed out: ${request.command}`, "timeout"));
+    }, request.timeoutMs);
+
+    child.stdout!.on("data", (chunk: Buffer) => {
+      try {
+        outputBytes = appendChunk(stdout, chunk, outputBytes, request.outputByteLimit);
+      } catch (error) {
+        rejectOnce(error as Error);
+      }
     });
+    child.stderr!.on("data", (chunk: Buffer) => {
+      try {
+        outputBytes = appendChunk(stderr, chunk, outputBytes, request.outputByteLimit);
+      } catch (error) {
+        rejectOnce(error as Error);
+      }
+    });
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      rejectOnce(new ProcessExecutionFailure(
+        error.code === "ENOENT" ? `analysis CLI was not found: ${request.command}` : `cannot start analysis CLI: ${request.command}`,
+        error.code === "ENOENT" ? "command_not_found" : "spawn_failed",
+      ));
+    });
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: exitCode ?? 1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+    child.stdin!.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") rejectOnce(error);
+    });
+    child.stdin!.end(request.stdin, "utf8");
   });
-  child.stdin!.on("error", (error: NodeJS.ErrnoException) => {
-    if (error.code !== "EPIPE") rejectOnce(error);
-  });
-  child.stdin!.end(request.stdin, "utf8");
-});
+};
 
 export interface RequestCliAnalysisOptions {
   readonly profile: CliAnalysisProfile;
@@ -176,6 +192,7 @@ export interface RequestCliAnalysisOptions {
   readonly maximumOutputTokens: number;
   readonly responseFormat: AnalysisResponseFormat;
   readonly processRunner?: AnalysisProcessRunner;
+  readonly timeoutMs?: number;
 }
 
 function usageValue(value: unknown): number {
@@ -269,6 +286,7 @@ export async function detectCliAnalysisBackend(
           },
         },
         processRunner,
+        timeoutMs: DETECTION_TIMEOUT_MS,
       });
       if (successfulModelCheck(result.content)) return backend;
     } catch {
@@ -523,6 +541,7 @@ async function requestCodex(
     "--disable", "unified_exec",
     "--disable", "multi_agent",
     "-c", 'web_search="disabled"',
+    "-c", `model_reasoning_effort="${options.profile.tier === "fast" ? "low" : "medium"}"`,
     "-c", `model_instructions_file=${JSON.stringify(instructionsPath)}`,
     "exec",
     "--ephemeral",
@@ -541,7 +560,7 @@ async function requestCodex(
     cwd: options.profile.workingDirectory,
     environment: childEnvironment(options.profile.environment),
     stdin: analysisPrompt(options, false),
-    timeoutMs: REQUEST_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     outputByteLimit: RESPONSE_BYTE_LIMIT,
   });
   if (result.exitCode !== 0) throw failedCommand(options.profile, result);
@@ -571,7 +590,7 @@ async function requestClaude(
     cwd: options.profile.workingDirectory,
     environment: childEnvironment(options.profile.environment),
     stdin: analysisPrompt(options, true),
-    timeoutMs: REQUEST_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     outputByteLimit: RESPONSE_BYTE_LIMIT,
   });
   if (result.exitCode !== 0) throw failedCommand(options.profile, result);
@@ -622,7 +641,7 @@ async function requestOpenCode(
     cwd: options.profile.workingDirectory,
     environment,
     stdin: analysisPrompt(options, true),
-    timeoutMs: REQUEST_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     outputByteLimit: RESPONSE_BYTE_LIMIT,
   });
   if (result.exitCode !== 0) throw failedCommand(options.profile, result);
@@ -658,7 +677,7 @@ async function requestPi(
     cwd: options.profile.workingDirectory,
     environment,
     stdin: analysisPrompt(options, true),
-    timeoutMs: REQUEST_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     outputByteLimit: RESPONSE_BYTE_LIMIT,
   });
   if (result.exitCode !== 0) throw failedCommand(options.profile, result);

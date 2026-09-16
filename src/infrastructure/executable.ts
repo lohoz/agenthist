@@ -5,6 +5,7 @@ export interface ExecutableResolutionOptions {
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly searchCurrentDirectory?: boolean;
 }
 
 function environmentValue(
@@ -49,15 +50,17 @@ export function executableCandidates(
   const implementation = platform === "win32" ? path.win32 : path.posix;
   const environment = options.environment ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+  const searchCurrentDirectory = options.searchCurrentDirectory ?? true;
   const explicit = implementation.isAbsolute(command) || command.includes("/") ||
     platform === "win32" && command.includes("\\");
   const bases = explicit
     ? [implementation.isAbsolute(command) ? command : implementation.resolve(cwd, command)]
     : [
-        ...(platform === "win32" ? [implementation.resolve(cwd, command)] : []),
+        ...(platform === "win32" && searchCurrentDirectory ? [implementation.resolve(cwd, command)] : []),
         ...(environmentValue(environment, "PATH", platform) ??
           (platform === "win32" ? environmentValue(process.env, "PATH", platform) ?? "" : "/usr/bin:/bin"))
           .split(implementation.delimiter)
+          .filter((directory) => searchCurrentDirectory || directory !== "")
           .map((directory) => directory.startsWith('"') && directory.endsWith('"')
             ? directory.slice(1, -1)
             : directory)

@@ -4,6 +4,7 @@ export {
   DEFAULT_EXPERIENCE_REQUEST_INPUT_TOKENS,
 } from "./corpus.js";
 export type { DiscoveryCard, ExperienceBeat } from "./corpus.js";
+export { validateExperienceReviewPack } from "./review.js";
 export type { ExperienceReviewPack } from "./review.js";
 export { OperationError } from "./operation-error.js";
 
@@ -32,4 +33,8 @@ export type {
   PrepareExperienceReviewProgress,
   PrepareExperienceReviewResult,
 } from "./evidence-extractor.js";
+export {
+  loadExperienceReviewPack,
+  MAX_EXPERIENCE_REVIEW_DATA_BYTES,
+} from "./review-writer.js";
 export type { ExperienceReviewPublication } from "./review-writer.js";

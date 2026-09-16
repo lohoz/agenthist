@@ -17,6 +17,8 @@ agenthist codex provider list
 
 Output marks the provider currently configured in Codex and shows the existing session count for each provider.
 
+The desktop app exposes the same operation in **Settings → 统一历史 Provider**. Open the dialog to see provider counts, choose the current provider, `openai`, an existing provider, or a custom ID, then preview and confirm. Desktop defaults to the current configured provider. If the inventory or current provider changes before confirmation, the app shows an updated plan without writing. Completed changes refresh the history list and can be rolled back through **事务恢复**. Invalid or incomplete native history blocks the preview; provider counts remain visible.
+
 ## Unify providers
 
 ```bash

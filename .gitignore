@@ -1,5 +1,25 @@
 # Machine-local plans, experiments, credentials, and test infrastructure.
 /.local/
+/GUI_TODO.md
+/tests/manual-*.mjs
+/readme-pic/*.png
+# Only reviewed, sanitized documentation screenshots are tracked.
+!/readme-pic/public/
+/build/icons/
+/build/icon.png
+/build/icon.ico
+/build/icon.icns
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.agenthist
+*.exe
+*.dmg
+*.deb
+*.AppImage
+*.rpm
+*.tgz
+*.zip
 .env
 .env.*
 *.jks
@@ -12,6 +32,10 @@
 /bin/
 /coverage/
 /dist/
+/release/
+/release-assets/
+/playwright-report/
+/test-results/
 /.build/
 /node_modules/
 *.log

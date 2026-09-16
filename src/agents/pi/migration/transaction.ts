@@ -18,7 +18,12 @@ import {
   type ExclusiveFileImage,
 } from "../../../infrastructure/exclusive-file.js";
 import { digestFile } from "../../../infrastructure/files.js";
-import { loadHistoryHead, loadSnapshot, restoreHistoryHead } from "../../../infrastructure/history-store.js";
+import {
+  historyHeadMatchesSnapshot,
+  loadHistoryHead,
+  loadSnapshot,
+  restoreHistoryHead,
+} from "../../../infrastructure/history-store.js";
 import {
   observeManagedResourceEffects,
   prepareManagedResourceTransactionEffects,
@@ -564,7 +569,8 @@ export async function previewPiRollback(
     operation: "history_import",
     state: journal.state,
     direction: "rollback",
-    ready: nativeAt(observed, "after") && await loadHistoryHead(stateDirectory, "pi") === payload.historyHeadAfter,
+    ready: nativeAt(observed, "after") &&
+      await historyHeadMatchesSnapshot(stateDirectory, "pi", payload.historyHeadAfter),
     items: payload.sessions.length,
     findings: observed.findings,
   };

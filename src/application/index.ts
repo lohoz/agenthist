@@ -147,6 +147,20 @@ export type {
 } from "./local-transfer.js";
 export { prepareResumeLaunch } from "./resume.js";
 export type { ResumeLaunchOptions } from "./resume.js";
+export {
+  confirmConversationResume,
+  planConversationResume,
+} from "./conversation-resume.js";
+export type {
+  ConfirmConversationResumeOptions,
+  ConversationResumeConfirmation,
+  ConversationResumeDependencies,
+  ConversationResumePlan,
+  ConversationResumeQuality,
+  ConversationResumeRoute,
+  ConversationResumeWorkspace,
+  PlanConversationResumeOptions,
+} from "./conversation-resume.js";
 
 export type {
   ImportConversionPlanItem,
@@ -191,8 +205,11 @@ export {
   DEFAULT_EXPERIENCE_REQUEST_INPUT_TOKENS,
   dryRunExperienceReview,
   experienceReviewResultJson,
+  loadExperienceReviewPack,
+  MAX_EXPERIENCE_REVIEW_DATA_BYTES,
   OperationError,
   prepareExperienceReview,
+  validateExperienceReviewPack,
 } from "../experience/index.js";
 export type {
   DiscoveryCard,

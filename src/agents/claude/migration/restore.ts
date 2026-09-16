@@ -480,6 +480,8 @@ async function reconcileWithoutNativeWrite(options: RestoreClaudeOptions, plan: 
     stateDirectory: options.stateDirectory,
     configRoot: plan.configRoot,
     importedLibrary: importedLibrary(options.entries),
+    isolateInvalidSessions: true,
+    requiredNativeIds: options.entries.map((entry) => entry.nativeId),
   });
 }
 

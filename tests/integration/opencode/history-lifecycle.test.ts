@@ -269,6 +269,14 @@ test("OpenCode scan accepts an initialized database before its first session", a
   try {
     await mkdir(dataRoot, { recursive: true });
     createSource(databasePath);
+    const nonCanonical = new DatabaseSync(databasePath);
+    const project = nonCanonical.prepare("SELECT id, worktree FROM project LIMIT 1").get() as {
+      id: string;
+      worktree: string;
+    };
+    nonCanonical.prepare("UPDATE project SET worktree = ? WHERE id = ?")
+      .run(`${project.worktree}${path.sep}`, project.id);
+    nonCanonical.close();
     clearTarget(databasePath);
     const scanned = await runCli([
       "--json", "--state-dir", state, "--opencode-data-root", dataRoot,

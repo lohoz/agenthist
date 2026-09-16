@@ -13,7 +13,7 @@
 
 AgentHist 集中整理受支持的编程 Agent 会话，提供查看、搜索、导出和选择性导入，并支持同工具跨机器迁移与跨 Agent 转换。
 
-它还能从多个会话中发现反复出现的要求、偏好和工作方法，结合原始证据整理为可进一步筛选、合并和改写的经验候选。增量处理与分级模型调用可以减少重复分析的开销。
+它还能从多个会话中发现反复出现的要求、偏好和工作方法，结合原始证据整理为可进一步筛选、合并和改写的经验候选。GUI 将提取和整理合并为一次模型请求，CLI 也保留原有增量证据工作流。
 
 ## ✨ Highlights
 
@@ -35,7 +35,7 @@ AgentHist 集中整理受支持的编程 Agent 会话，提供查看、搜索、
 
 ## 📦 安装
 
-需要 Node.js 24。
+CLI 需要 Node.js 24。
 
 ```bash
 npm install -g agenthist
@@ -46,6 +46,63 @@ npm install -g agenthist
 ```bash
 npx agenthist --help
 ```
+
+### GUI 桌面应用
+
+从 [GitHub Releases](https://github.com/lohoz/agenthist/releases/latest) 下载适合你的系统与架构的安装包，安装后直接打开 AgentHist。桌面应用已包含 Electron，**无需安装 Node.js，也无需启动 Web Server**。
+
+| 平台 | 安装包 |
+| --- | --- |
+| Windows x64 | Setup.exe / Portable.exe |
+| macOS Intel / Apple Silicon | x64 / arm64 DMG、应用 ZIP |
+| Linux x64 / ARM64 | DEB、RPM、AppImage |
+
+### CLI 命令行
+
+上面的 npm / npx 命令安装 CLI，适合终端交互、脚本和自动化。GUI 与 CLI 共用历史解析、迁移和事务逻辑；继续对话需要本机安装对应的 Agent。源码版 CLI 可执行 `npm run build && npm link`。
+
+## 🖥️ GUI 使用
+
+- **对话**：磁盘 → 文件夹 → 对话的紧凑目录树，同目录下各 Agent 统一显示，支持搜索、批量导出和隐藏记录恢复。
+- **继续**：原 Agent 直接续聊，切换 Agent 时先展示转换影响，完成后目标对话立即加入历史。
+- **经验**：选择现有 Agent 的 API 配置，先检测模型，再预览全部历史或勾选范围；单次请求生成经验候选，重复上下文在本地无损压缩。
+- **设置**：主题、历史 Provider、Agent 路径、经验模型和命令行终端分组管理。统一 Provider 支持预览、确认与事务回滚。
+
+<p align="center"><img src="readme-pic/public/history.png" alt="AgentHist 对话历史与目录树" width="100%"></p>
+
+| 跨 Agent 继续 | 经验提取 |
+| --- | --- |
+| ![转换预览](readme-pic/public/conversion.png) | ![经验预览](readme-pic/public/experience.png) |
+
+<details>
+<summary>查看设置界面</summary>
+
+![设置界面](readme-pic/public/settings.png)
+
+</details>
+
+展示图使用合成示例或脱敏内容，不包含真实用户历史和 API 凭据。
+
+## 🛠️ GUI 构建与打包
+
+```bash
+git clone --branch ui https://github.com/lohoz/agenthist.git
+cd agenthist
+npm ci
+npm run desktop:dev
+```
+
+开发需要 Node.js 24。在目标系统中执行：
+
+```bash
+npm run desktop:dist:win                 # Windows x64：EXE
+npm run desktop:dist:mac -- --arm64      # Apple Silicon：DMG / ZIP
+npm run desktop:dist:mac -- --x64        # Intel Mac：DMG / ZIP
+npm run desktop:dist:linux -- --x64      # Linux：DEB / RPM / AppImage
+npm run desktop:dist:linux -- --arm64    # Linux ARM64
+```
+
+产物位于 `release/`；`npm run desktop:pack` 只生成当前平台的解包目录。macOS 打包需要 macOS；各平台依赖、安装步骤、签名说明、测试和 Release 流程见[完整构建指南](docs/desktop-build.md#简体中文)。社区发布包默认未签名，macOS 未做 Apple 公证。
 
 ## 让 Agent 使用 AgentHist
 
@@ -245,7 +302,7 @@ agenthist experience --all
 - AgentHist 处理历史记录，不包含 Base URL、API Key、Token、OAuth 等连接信息；
 - `agenthist help <command>` 可以查看终端内帮助。
 
-常见疑问见 [FAQ](docs/faq.md)。
+常见疑问见 [FAQ](docs/faq.md)。版本变化、安全问题报告方式和本地数据处理说明分别见 [Changelog](CHANGELOG.md)、[安全策略](SECURITY.md)与[隐私说明](PRIVACY.md)。
 
 ## 从源码运行
 

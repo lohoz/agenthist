@@ -1,7 +1,8 @@
 {
   "name": "agenthist",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Manage, migrate, convert, and extract recurring experience from local coding Agent history",
+  "author": "lohoz",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,8 +16,11 @@
   "files": [
     ".build/src",
     ".build/package.json",
+    "CHANGELOG.md",
     "LICENSE",
+    "PRIVACY.md",
     "README.md",
+    "SECURITY.md",
     "docs"
   ],
   "engines": {
@@ -27,21 +31,150 @@
   },
   "scripts": {
     "clean": "node --eval \"require('node:fs').rmSync('.build', { recursive: true, force: true })\"",
-    "build": "npm run clean --silent && tsc -p tsconfig.json",
+    "build": "npm run clean --silent && npm run build:core && npm run build:preload && npm run build:renderer",
+    "build:core": "tsc -p tsconfig.json",
+    "build:preload": "esbuild src/desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=.build/src/desktop/preload.cjs",
+    "build:renderer": "vite build",
+    "build:icons": "node scripts/build-icons.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
     "test": "node --test \".build/tests/**/*.test.js\"",
+    "test:desktop": "vitest run",
+    "test:e2e": "playwright test",
+    "soak:desktop": "npm run build && node scripts/soak-desktop.mjs",
     "benchmark:history": "node --expose-gc .build/tests/benchmarks/history-pool.js",
     "smoke": "node .build/src/cli/main.js --help",
     "smoke:package": "node tests/package-smoke.mjs",
+    "smoke:desktop-package": "node scripts/smoke-packaged-desktop.mjs",
+    "smoke:desktop-installer": "node scripts/smoke-windows-installer.mjs",
+    "smoke:desktop-artifacts": "node scripts/verify-windows-desktop-artifacts.mjs",
+    "desktop:runtime": "electron scripts/verify-electron-runtime.mjs",
+    "desktop:dev": "npm run build && electron .build/src/desktop/main.js",
+    "desktop:start": "electron .build/src/desktop/main.js",
+    "desktop:pack": "npm run build:icons && npm run build && electron-builder --dir --publish never",
+    "desktop:dist": "npm run build:icons && npm run build && electron-builder --publish never",
     "prepack": "npm run build",
-    "verify": "npm run build && npm test && npm run smoke"
+    "verify": "npm run typecheck && npm run build && npm test && npm run test:desktop && npm run smoke",
+    "verify:all": "npm run verify && npm run test:e2e && npm run smoke:package && npm run desktop:runtime",
+    "desktop:dist:win": "npm run desktop:dist -- --win --x64",
+    "desktop:dist:mac": "npm run desktop:dist -- --mac",
+    "desktop:dist:linux": "npm run desktop:dist -- --linux"
   },
   "dependencies": {
     "cross-spawn": "7.0.6",
     "smol-toml": "1.7.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@radix-ui/react-alert-dialog": "1.1.23",
+    "@radix-ui/react-dialog": "1.1.23",
+    "@radix-ui/react-dropdown-menu": "2.1.24",
+    "@radix-ui/react-select": "2.3.7",
+    "@tailwindcss/vite": "4.3.3",
+    "@tanstack/react-virtual": "3.14.10",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "24.13.3",
-    "typescript": "7.0.2"
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "electron": "44.1.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "lucide-react": "1.40.0",
+    "png-to-ico": "3.0.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "sharp": "0.35.4",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.0",
+    "wait-on": "9.1.0"
+  },
+  "build": {
+    "appId": "io.github.lohoz.agenthist",
+    "productName": "AgentHist",
+    "extraMetadata": {
+      "main": ".build/src/desktop/main.js"
+    },
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": true,
+      "enableCookieEncryption": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": true
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      ".build/src/**/*",
+      ".build/package.json",
+      ".build/desktop-renderer/**/*",
+      "package.json",
+      "CHANGELOG.md",
+      "LICENSE",
+      "PRIVACY.md",
+      "SECURITY.md"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "AgentHist-${version}-${arch}-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AgentHist"
+    },
+    "portable": {
+      "artifactName": "AgentHist-${version}-${arch}-Portable.${ext}"
+    },
+    "artifactName": "AgentHist-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "artifactName": "AgentHist-${version}-macOS-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icons",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development",
+      "maintainer": "lohoz <lohoz@users.noreply.github.com>",
+      "synopsis": "Local coding Agent history manager",
+      "desktop": {
+        "entry": {
+          "Name": "AgentHist",
+          "Comment": "Browse, migrate, and continue coding Agent conversations"
+        }
+      },
+      "artifactName": "AgentHist-${version}-Linux-${arch}.${ext}"
+    }
   }
 }

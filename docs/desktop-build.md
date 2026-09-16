@@ -44,6 +44,8 @@ Electron 44 requires macOS 13 or later; Windows packages target Windows 10/11 x6
 
 ### Install the packages
 
+Linux build tools may use `amd64`, `x86_64` or `aarch64` in local filenames. Release collection normalizes these to `x64` or `arm64`; the package's native architecture metadata is unchanged.
+
 - Windows: run Setup, or launch the Portable EXE from a writable location.
 - macOS: open the matching DMG and copy AgentHist to Applications. This community release is not Apple-notarized; macOS may require approval in Privacy & Security after verifying the download source.
 - Debian/Ubuntu: `sudo apt install ./AgentHist-<version>-Linux-x64.deb`.
@@ -99,6 +101,8 @@ Windows 支持 Windows 10/11 x64；macOS 需要 13 或更新版本；Linux 发�
 当前社区包默认未签名，macOS 未做 Apple 公证，系统可能显示来源确认提示。校验来源与 `SHA256SUMS.txt` 后再按系统提示允许运行；签名证书和凭据不得提交到仓库。
 
 ### 验证与发布
+
+Linux 本地打包器可能使用 `amd64`、`x86_64`、`aarch64` 文件名。Release 汇总时统一为 `x64` / `arm64`，安装包内部的原生架构信息保持不变。
 
 `npm run verify` 检查类型、构建、核心和界面测试以及 CLI；`npm run smoke:package` 验证安装后的 CLI 包；`node scripts/smoke-desktop-launch.mjs` 验证打包应用启动（Linux CI 使用 `xvfb-run -a`）。Windows 还提供 `npm run test:e2e` 和 `npm run smoke:desktop-artifacts`。
 

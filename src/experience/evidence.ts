@@ -1,14 +1,14 @@
 import { canonicalDigest } from "../domain/history-identity.js";
 import {
   discoveryCardJson,
-  EXPERIENCE_TOPICS,
+  MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS,
   type DiscoveryCard,
   type ExperienceTopic,
 } from "./corpus.js";
 import type { JsonValue } from "../domain/history.js";
 
-export const FAST_DISCOVERY_SCHEMA_VERSION = "agenthist.fast-discovery/v12" as const;
-export const FAST_DISCOVERY_PROMPT_VERSION = "agenthist.fast-discovery-prompt/v12" as const;
+export const FAST_DISCOVERY_SCHEMA_VERSION = "agenthist.fast-discovery/v13" as const;
+export const FAST_DISCOVERY_PROMPT_VERSION = "agenthist.fast-discovery-prompt/v13" as const;
 
 export const FAST_EVIDENCE_BASES = [
   "explicit_constraint",
@@ -147,7 +147,7 @@ function eventSchema(userQuoteIds: readonly string[]): Record<string, unknown> {
   return {
     type: "object",
     properties: {
-      topic: { type: "string", enum: EXPERIENCE_TOPICS },
+      topic: stringSchema(MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS),
       basis: { type: "string", enum: FAST_EVIDENCE_BASES },
       lenses: {
         type: "array",
@@ -363,7 +363,7 @@ function eventValue(
   const item = objectValue(value, label, issues);
   if (item === undefined) return undefined;
   exactKeys(item, ["topic", "basis", "lenses", "observation", "behavior_signature", "user_quote_ids"], label, issues);
-  const topic = enumValue(item.topic, EXPERIENCE_TOPICS, `${label}.topic`, issues);
+  const topic = textValue(item.topic, `${label}.topic`, issues, MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS);
   const basis = enumValue(item.basis, FAST_EVIDENCE_BASES, `${label}.basis`, issues);
   const lenses = stringArray(
     item.lenses,
@@ -490,7 +490,7 @@ function cachedEventValue(
   if (!Array.isArray(item.evidence_ids) || item.evidence_ids.length !== 1 || item.evidence_ids[0] !== card.cardRef) {
     issues.push(`${label}.evidence_ids must contain only its discovery_id`);
   }
-  const topic = enumValue(item.topic, EXPERIENCE_TOPICS, `${label}.topic`, issues);
+  const topic = textValue(item.topic, `${label}.topic`, issues, MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS);
   const basis = enumValue(item.basis, FAST_EVIDENCE_BASES, `${label}.basis`, issues);
   const lenses = stringArray(
     item.lenses,

@@ -23,21 +23,8 @@ const MAX_TOOL_EVIDENCE_BYTES = 4 * 1024;
 const MAX_DISCOVERY_CARDS_PER_REQUEST = 8;
 const REQUEST_OVERHEAD_TOKENS = 1_200;
 
-export const EXPERIENCE_TOPICS = [
-  "research_writing",
-  "research_literature",
-  "research_experimentation",
-  "research_analysis",
-  "software_development",
-  "software_testing",
-  "software_debugging",
-  "data_analysis",
-  "version_control",
-  "project_workflow",
-  "communication_style",
-  "general",
-] as const;
-export type ExperienceTopic = (typeof EXPERIENCE_TOPICS)[number];
+export const MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS = 80;
+export type ExperienceTopic = string;
 
 export interface ExperienceToolSummary {
   readonly name: string;
@@ -831,7 +818,7 @@ export function planExperienceBudget(
     estimatedFastInputTokens: totalTokens,
     fastRequests: requests,
     deepInputTokensUpperBound: deepUpper,
-    deepRequestsUpperBound: deepUpper === 0 ? 0 : 4,
+    deepRequestsUpperBound: deepUpper === 0 ? 0 : 6,
   };
 }
 

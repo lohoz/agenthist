@@ -1,6 +1,5 @@
 import {
   batchExperienceCards,
-  EXPERIENCE_TOPICS,
   planExperienceBudget,
   type DiscoveryCard,
 } from "./corpus.js";
@@ -168,8 +167,8 @@ function systemPrompt(): string {
     "Split mixed user text into atomic events. Preserve concrete names, paths, sections, methods, ordering, negation, and numbers at this stage. Later stages, not this one, decide which details are project-specific.",
     `Each event has exactly topic, basis, lenses, observation, behavior_signature, user_quote_ids. Allowed bases: ${FAST_EVIDENCE_BASES.join(", ")}.`,
     `Choose 1-3 semantic lenses per event from: ${EXPERIENCE_LENSES.join(", ")}. Lenses indicate where a recurring principle might be found; they are not confidence labels.`,
-    `topic is semantic applicability, never a project name. Allowed topics: ${EXPERIENCE_TOPICS.join(", ")}.`,
-    "Use research_writing for prose or style in papers and research artifacts; communication_style for interaction with the user; project_workflow for coordination rather than code, tests, or version control.",
+    "topic is a short, open applicability label in the language best supported by the evidence. It is descriptive metadata, not a routing category. Do not use a project, repository, file, person, product, or one-off task name as the topic, and do not force the event into a preset taxonomy.",
+    "Order lenses by explanatory importance. The first lens may be used only as a budget fallback when all evidence cannot fit in one candidate-organization request.",
     "observation is a faithful concrete description in the language best supported by the selected quote. behavior_signature has exactly situation, behavior, target in concise English and preserves distinctions that change meaning.",
     "Keep episode_summary and observation <=500 characters. Keep signature situation <=120, behavior <=140, and target <=100. Do not infer recurrence from one episode.",
     `The output contract is ${FAST_DISCOVERY_SCHEMA_VERSION}.`,

@@ -13,7 +13,8 @@ import {
 
 const CONFIG_FILE_LIMIT = 1024 * 1024;
 const RESPONSE_BYTE_LIMIT = 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 90_000;
+const FAST_REQUEST_TIMEOUT_MS = 90_000;
+const DEEP_REQUEST_TIMEOUT_MS = 180_000;
 
 const VARIABLES = [
   "AGENTHIST_EXPERIENCE_BACKEND",
@@ -693,7 +694,9 @@ async function requestOpenAIAnalysis(
         },
         max_completion_tokens: options.maximumOutputTokens,
       }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(
+        options.profile.tier === "deep" ? DEEP_REQUEST_TIMEOUT_MS : FAST_REQUEST_TIMEOUT_MS,
+      ),
     });
   } catch (error) {
     throw networkFailure(error, options.profile, options.stage);

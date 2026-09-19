@@ -1,6 +1,6 @@
 import {
   estimateExperienceTokens,
-  EXPERIENCE_TOPICS,
+  MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS,
   type DiscoveryCard,
   type ExperienceTopic,
 } from "./corpus.js";
@@ -14,8 +14,8 @@ import {
 import { canonicalDigest } from "../domain/history-identity.js";
 import type { JsonValue } from "../domain/history.js";
 
-export const CANDIDATE_ORGANIZATION_SCHEMA_VERSION = "agenthist.candidate-organization/v1" as const;
-export const CANDIDATE_ORGANIZATION_PROMPT_VERSION = "agenthist.candidate-organization-prompt/v1" as const;
+export const CANDIDATE_ORGANIZATION_SCHEMA_VERSION = "agenthist.candidate-organization/v3" as const;
+export const CANDIDATE_ORGANIZATION_PROMPT_VERSION = "agenthist.candidate-organization-prompt/v3" as const;
 
 export const CONSOLIDATION_RELATIONS = [
   "shared_principle",
@@ -32,10 +32,11 @@ export const CONSOLIDATION_UNROUTED_REASONS = [
 
 export type ConsolidationRelation = (typeof CONSOLIDATION_RELATIONS)[number];
 export type ConsolidationUnroutedReason = (typeof CONSOLIDATION_UNROUTED_REASONS)[number];
-export type ConsolidationScope = "writing" | "research" | "engineering" | "workflow";
+export type ConsolidationScope = "global" | `lens:${ExperienceLens}`;
 
 const MAXIMUM_GROUP_OCCURRENCES = 12;
-const MAXIMUM_GROUPS_PER_REQUEST = 8;
+const MAXIMUM_GLOBAL_GROUPS = 16;
+const MAXIMUM_ROUTED_GROUPS = 6;
 const CONSOLIDATION_PROMPT_OVERHEAD_TOKENS = 2_400;
 
 export interface EvidenceOccurrence {
@@ -52,6 +53,7 @@ export interface ExperienceConsolidationRequest {
   readonly requestRef: string;
   readonly scope: ConsolidationScope;
   readonly evidence: readonly EvidenceOccurrence[];
+  readonly maximumGroups: number;
   readonly estimatedInputTokens: number;
 }
 
@@ -165,7 +167,7 @@ function aliases(request: ExperienceConsolidationRequest): RequestAliases {
 }
 
 function requestPayload(scope: ConsolidationScope, evidence: readonly EvidenceOccurrence[]): Record<string, unknown> {
-  const mapped = aliases({ requestRef: "pending", scope, evidence, estimatedInputTokens: 0 });
+  const mapped = aliases({ requestRef: "pending", scope, evidence, maximumGroups: 0, estimatedInputTokens: 0 });
   return {
     scenario: scope,
     lenses: EXPERIENCE_LENSES,
@@ -188,9 +190,13 @@ function requestPayload(scope: ConsolidationScope, evidence: readonly EvidenceOc
   };
 }
 
-function makeRequest(scope: ConsolidationScope, evidence: readonly EvidenceOccurrence[]): ExperienceConsolidationRequest {
+function makeRequest(
+  scope: ConsolidationScope,
+  evidence: readonly EvidenceOccurrence[],
+  maximumGroups: number,
+): ExperienceConsolidationRequest {
   const ordered = [...evidence].sort((left, right) => left.occurrenceRef.localeCompare(right.occurrenceRef));
-  const payload = requestPayload(scope, ordered);
+  const payload = { candidate_limit: maximumGroups, ...requestPayload(scope, ordered) };
   const requestRef = `ahconreq2_${canonicalDigest({
     schema: CANDIDATE_ORGANIZATION_SCHEMA_VERSION,
     prompt: CANDIDATE_ORGANIZATION_PROMPT_VERSION,
@@ -200,23 +206,11 @@ function makeRequest(scope: ConsolidationScope, evidence: readonly EvidenceOccur
     requestRef,
     scope,
     evidence: ordered,
+    maximumGroups,
     estimatedInputTokens: CONSOLIDATION_PROMPT_OVERHEAD_TOKENS + estimateExperienceTokens(
       JSON.stringify({ request_id: requestRef, ...payload }),
     ),
   };
-}
-
-function topicScope(topic: ExperienceTopic): ConsolidationScope {
-  if (topic === "research_writing" || topic === "communication_style") return "writing";
-  if (
-    topic === "research_literature" || topic === "research_experimentation" ||
-    topic === "research_analysis" || topic === "data_analysis"
-  ) return "research";
-  if (
-    topic === "software_development" || topic === "software_testing" ||
-    topic === "software_debugging" || topic === "version_control"
-  ) return "engineering";
-  return "workflow";
 }
 
 function independentlyComparable(evidence: readonly EvidenceOccurrence[]): boolean {
@@ -233,12 +227,25 @@ export function buildExperienceConsolidationPlan(
     throw new Error("experience consolidation request input token budget must be a non-negative integer");
   }
   const occurrences = evidenceOccurrences(cards, discoveries);
+  if (!independentlyComparable(occurrences)) {
+    return {
+      occurrences,
+      requests: [],
+      localUnrouted: occurrences.map((occurrence) => ({ occurrence, reason: "insufficient_evidence" })),
+    };
+  }
+  const global = makeRequest("global", occurrences, MAXIMUM_GLOBAL_GROUPS);
+  if (global.estimatedInputTokens <= maximumRequestTokens) {
+    return { occurrences, requests: [global], localUnrouted: [] };
+  }
   const requests: ExperienceConsolidationRequest[] = [];
   const localUnrouted: UnroutedEvidenceOccurrence[] = [];
-  for (const scope of ["writing", "research", "engineering", "workflow"] as const) {
-    const evidence = occurrences.filter((item) => topicScope(item.event.topic) === scope);
+  for (const lens of EXPERIENCE_LENSES) {
+    const evidence = occurrences.filter((item) => item.event.lenses[0] === lens);
     if (evidence.length === 0) continue;
-    if (independentlyComparable(evidence)) requests.push(makeRequest(scope, evidence));
+    if (independentlyComparable(evidence)) {
+      requests.push(makeRequest(`lens:${lens}`, evidence, MAXIMUM_ROUTED_GROUPS));
+    }
     else evidence.forEach((occurrence) => localUnrouted.push({ occurrence, reason: "insufficient_evidence" }));
   }
   return { occurrences, requests, localUnrouted };
@@ -248,6 +255,7 @@ export function experienceConsolidationRequestJson(request: ExperienceConsolidat
   return {
     request_id: request.requestRef,
     schema_version: CANDIDATE_ORGANIZATION_SCHEMA_VERSION,
+    candidate_limit: request.maximumGroups,
     ...requestPayload(request.scope, request.evidence),
   } as JsonValue;
 }
@@ -266,13 +274,13 @@ export function experienceConsolidationResponseSchema(
       request_id: { type: "string", const: request.requestRef },
       groups: {
         type: "array",
-        maxItems: MAXIMUM_GROUPS_PER_REQUEST,
+        maxItems: request.maximumGroups,
         items: {
           type: "object",
           properties: {
             lens: { type: "string", enum: EXPERIENCE_LENSES },
             hypothesis: stringSchema(500),
-            topic: { type: "string", enum: EXPERIENCE_TOPICS },
+            topic: stringSchema(MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS),
             relation: { type: "string", enum: CONSOLIDATION_RELATIONS },
             event_ids: {
               type: "array",
@@ -376,7 +384,7 @@ function groupValue(
   exactKeys(item, ["lens", "hypothesis", "topic", "relation", "event_ids"], label, issues);
   const lens = enumValue(item.lens, EXPERIENCE_LENSES, `${label}.lens`, issues);
   const hypothesis = textValue(item.hypothesis, `${label}.hypothesis`, issues, 500);
-  const topic = enumValue(item.topic, EXPERIENCE_TOPICS, `${label}.topic`, issues);
+  const topic = textValue(item.topic, `${label}.topic`, issues, MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS);
   const relation = enumValue(item.relation, CONSOLIDATION_RELATIONS, `${label}.relation`, issues);
   const ids = eventIds(item.event_ids, `${label}.event_ids`, mapped, issues);
   const evidence = ids?.map((id) => mapped.occurrenceByAlias.get(id)!) ?? [];
@@ -417,23 +425,32 @@ export function validateExperienceConsolidation(
     issues.push("root.request_id does not match the requested consolidation");
   }
   const mapped = aliases(request);
-  if (!Array.isArray(root.groups) || root.groups.length > MAXIMUM_GROUPS_PER_REQUEST) {
-    issues.push(`root.groups must contain 0-${MAXIMUM_GROUPS_PER_REQUEST} groups`);
+  if (!Array.isArray(root.groups) || root.groups.length > request.maximumGroups) {
+    issues.push(`root.groups must contain 0-${request.maximumGroups} groups`);
   }
-  const parsedGroups = Array.isArray(root.groups)
+  const returnedGroups = Array.isArray(root.groups)
     ? root.groups.flatMap((candidate, index) => {
         const group = groupValue(candidate, index, request, mapped, issues);
         return group === undefined ? [] : [group];
       })
     : [];
+  const rejectedReasons = new Map<string, ConsolidationUnroutedReason>();
+  const parsedGroups = returnedGroups.filter((group) => {
+    const episodeCount = new Set(group.evidence.map((item) => item.episodeRef)).size;
+    const messageCount = new Set(group.evidence.flatMap((item) => item.mentionRefs)).size;
+    if (episodeCount >= 2 && messageCount >= 2) return true;
+    const reason = episodeCount < 2 ? "same_episode_only" : "same_message_only";
+    group.evidence.forEach((item) => rejectedReasons.set(item.occurrenceRef, reason));
+    return false;
+  });
   const groups = [...new Map(parsedGroups.map((group) => [group.groupRef, group])).values()];
   const grouped = new Set(groups.flatMap((group) => group.evidence.map((item) => item.occurrenceRef)));
   const unrouted: UnroutedEvidenceOccurrence[] = request.evidence
     .filter((occurrence) => !grouped.has(occurrence.occurrenceRef))
-    .map((occurrence) => ({ occurrence, reason: "not_grouped" }));
+    .map((occurrence) => ({ occurrence, reason: rejectedReasons.get(occurrence.occurrenceRef) ?? "not_grouped" }));
   if (
     issues.length !== 0 || requestId === undefined ||
-    (Array.isArray(root.groups) && parsedGroups.length !== root.groups.length)
+    (Array.isArray(root.groups) && returnedGroups.length !== root.groups.length)
   ) throw new ExperienceConsolidationValidationError(issues.slice(0, 16));
   return { requestRef: requestId, groups, unrouted };
 }
@@ -478,7 +495,7 @@ export function validateCachedExperienceConsolidation(
     const groupRef = textValue(item.group_ref, `${label}.group_ref`, issues, 128);
     const lens = enumValue(item.lens, EXPERIENCE_LENSES, `${label}.lens`, issues);
     const hypothesis = textValue(item.hypothesis, `${label}.hypothesis`, issues, 500);
-    const topic = enumValue(item.topic, EXPERIENCE_TOPICS, `${label}.topic`, issues);
+    const topic = textValue(item.topic, `${label}.topic`, issues, MAXIMUM_EXPERIENCE_TOPIC_CHARACTERS);
     const relation = enumValue(item.relation, CONSOLIDATION_RELATIONS, `${label}.relation`, issues);
     if (!Array.isArray(item.occurrence_refs) || item.occurrence_refs.length < 2 ||
       item.occurrence_refs.length > MAXIMUM_GROUP_OCCURRENCES) {
@@ -500,8 +517,12 @@ export function validateCachedExperienceConsolidation(
       if (occurrence !== undefined) grouped.add(reference);
       return occurrence === undefined ? [] : [occurrence];
     });
+    const independent = independentlyComparable(evidence);
+    if (evidence.length === item.occurrence_refs.length && !independent) {
+      issues.push(`${label}.occurrence_refs must cover at least two episodes and two user messages`);
+    }
     return groupRef === undefined || lens === undefined || hypothesis === undefined || topic === undefined ||
-      relation === undefined || evidence.length !== item.occurrence_refs.length
+      relation === undefined || evidence.length !== item.occurrence_refs.length || !independent
       ? []
       : [{
           groupRef,
